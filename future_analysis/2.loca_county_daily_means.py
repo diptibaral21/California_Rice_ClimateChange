@@ -13,9 +13,9 @@ import os
 
 #define file paths
 
-CLIMATE_DIR = os.environ.get("CLIMATE_DIR") # base directory defined in .bashrc
+CLIMATE_DIR = "group/moniergrp/dbaral"
 
-shape_file = os.path.join(CLIMATE_DR, "run_project/input_data/shape_files")
+shape_file = os.path.join(CLIMATE_DIR, "run_project/input_data/shape_files")
 loca_file = os.path.join(CLIMATE_DIR, "run_project/input_data/loca2")
 output_dir = os.path.join(CLIMATE_DIR, "run_project/intermediate_data/LOCA_csv")
 
