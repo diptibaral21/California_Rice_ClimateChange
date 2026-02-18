@@ -1,3 +1,5 @@
+## Clip the loca models by rice growing polygons
+
 #importing libraries
 import os
 import pandas as pd
@@ -10,38 +12,44 @@ import rioxarray
 import warnings
 
 #file paths -- shared_dir to access data and my_dir to save data
+
 shared_dir = '/group/moniergrp/LOCA2_CA'
-my_dir = '/group/moniergrp/LOCA2_future_rice_clipped'
+my_dir = '/group/moniergrp/dbaral/run_project/intermediate_data/loca_future_rice_nc'
 
-models = ['ACCESS-CM2', 'CNRM-ESM2-1', 'EC-Earth3', 'EC-Earth3-Veg', 'GFDL-ESM4', 'INM-CM5-0', 'MPI-ESM1-2-HR', 'MRI-ESM2-0','FGOALS-g3', 'HadGEM3-GC31-LL', 'IPSL-CM6A-LR', 'KACE-1-0-G',  'MIROC6']
-variables = ['tasmin', 'tasmax']
-scenarios = ['ssp245', 'ssp585']
+#load rice polygons
 
-output_dir = "/group/moniergrp/dbaral/run_project/input_data/loca_future"
+shape_files = "/group/moniergrp/dbaral/run_project/input_data/shape_files"
+rice = gpd.read_file(shape_files + "/Rice_Growing_Areas_30m.shp")
 
-for model in models:
-    for scenario in scenarios:
-        datasets = []
-        for var in variables:
-            file_path = os.path.join(my_dir,f"{model}_{scenario}_r1i1p1f1_{var}_rice.nc") 
-            if os.path.exists(file_path):
-                ds = xr.open_dataset(file_path)
-                datasets.append(ds)
-            else:
-                print(f"File not found: {file_path}")
-        if datasets:
-            combined_ds = xr.merge(datasets, compat = "override")
-            #compute mean temperature
-            combined_ds['tmean'] = (combined_ds['tasmin']+combined_ds['tasmax'])/2
-            
-            #growing season mask(May to october)
-            mask = (
-                ((combined_ds.time.dt.month >= 5) & (combined_ds.time.dt.month <=10)) 
-            )
-            # subset the data for all years
-            subset = combined_ds.sel(time =mask)
-        #save the combine dataset
-        output_file = os.path.join(output_dir, f"{model}_{scenario}_r1i1p1f1_rice_temp.nc")
-        subset.to_netcdf(output_file)
-        print(f"Saved combined file: {output_file}")
 
+#loop through files in shared dir
+
+for f in os.listdir(shared_dir):
+    #only process if files that meet all below critera
+    if (f.endswith(".nc") and
+        ("tasmin" in f or "tasmax" in f) and 
+        ("ssp245" in f or "ssp585" in f)):
+
+        file_path = os.path.join(shared_dir, f)
+        print(f"processing {f} ..")
+
+        #open LOCA file
+        ds = xr.open_dataset(file_path, engine = 'netcdf4', chunks={'time': 365})
+        #select time slice 2030-2100
+        ds = ds.sel(time=slice('2030-01-01', '2100-12-31'))
+        clipped_vars={}
+        #loop through all variables in the dataset
+        for var in ds.data_vars:
+            print(f" - Clipping variable: {var}")
+            da = ds[var]
+            da = da.rio.write_crs("EPSG:4326")
+            clipped = da.rio.clip(rice.geometry, rice.crs)
+            clipped_vars[var] = clipped
+        #combine all clipped variables into one dataset
+        clipped_ds = xr.Dataset(clipped_vars)
+        #save output file
+        out_file = os.path.join(my_dir, f.replace(".nc", "_rice.nc"))
+        clipped_ds.to_netcdf(out_file)
+        print(f"saved {out_file}\n")
+
+print("Done all variables clipped and time-sliced for all files.") 
