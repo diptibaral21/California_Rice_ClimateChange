@@ -13,22 +13,23 @@ import warnings
 
 #file paths -- shared_dir to access data and my_dir to save data
 
+CLIMATE_DIR = '/group/moniergrp/dbaral'
 shared_dir = '/group/moniergrp/LOCA2_CA'
-my_dir = '/group/moniergrp/dbaral/run_project/intermediate_data/loca_future_rice_nc'
+my_dir = os.path.join(CLIMATE_DIR, 'run_project/intermediate_data/loca_future_rice_nc')
 
 #load rice polygons
 
-shape_files = "/group/moniergrp/dbaral/run_project/input_data/shape_files"
-rice = gpd.read_file(shape_files + "/Rice_Growing_Areas_30m.shp")
+shape_files = '/group/moniergrp/dbaral/run_project/input_data/shape_files'
+rice = gpd.read_file(shape_files + '/Rice_Growing_Areas_30m.shp')
 
 
 #loop through files in shared dir
 
 for f in os.listdir(shared_dir):
     #only process if files that meet all below critera
-    if (f.endswith(".nc") and
-        ("tasmin" in f or "tasmax" in f) and 
-        ("ssp245" in f or "ssp585" in f)):
+    if (f.endswith('.nc') and
+        ('tasmin' in f or 'tasmax' in f) and 
+        ('ssp245' in f or 'ssp585' in f)):
 
         file_path = os.path.join(shared_dir, f)
         print(f"processing {f} ..")
@@ -40,16 +41,16 @@ for f in os.listdir(shared_dir):
         clipped_vars={}
         #loop through all variables in the dataset
         for var in ds.data_vars:
-            print(f" - Clipping variable: {var}")
+            print(f' - Clipping variable: {var}')
             da = ds[var]
-            da = da.rio.write_crs("EPSG:4326")
+            da = da.rio.write_crs('EPSG:4326')
             clipped = da.rio.clip(rice.geometry, rice.crs)
             clipped_vars[var] = clipped
         #combine all clipped variables into one dataset
         clipped_ds = xr.Dataset(clipped_vars)
         #save output file
-        out_file = os.path.join(my_dir, f.replace(".nc", "_rice.nc"))
+        out_file = os.path.join(my_dir, f.replace('.nc', '_rice.nc'))
         clipped_ds.to_netcdf(out_file)
-        print(f"saved {out_file}\n")
+        print(f'saved {out_file}\n')
 
-print("Done all variables clipped and time-sliced for all files.") 
+print('Done all variables clipped and time-sliced for all files.') 
