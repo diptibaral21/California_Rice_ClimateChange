@@ -19,7 +19,7 @@ my_dir = os.path.join(CLIMATE_DIR, 'run_project/intermediate_data/loca_future_ri
 
 #load rice polygons
 
-shape_files = '/group/moniergrp/dbaral/run_project/input_data/shape_files'
+shape_files = os.path.join(CLIMATE_DIR, 'run_project/input_data/shape_files')
 rice = gpd.read_file(shape_files + '/Rice_Growing_Areas_30m.shp')
 
 
