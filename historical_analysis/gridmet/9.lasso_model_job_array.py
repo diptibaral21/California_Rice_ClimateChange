@@ -254,18 +254,7 @@ def run_70_30_validation(X, Y, df_filtered, feature_cols, trial, n_iterations=10
             'coefficient': coef_unstd, 
             'iteration': i
         })
-
-        intercept_row = pd.DataFrame({
-            'feature': ['intercept'],
-            'coefficient': [intercept_unstd],
-            'iteration': i
-        })
-
-        coef_df_iteration = pd.concat(
-            [coef_df_iteration, intercept_row], 
-            ignore_index=True
-        )
-
+        
         all_coef_list.append(coef_df_iteration)
         
 
