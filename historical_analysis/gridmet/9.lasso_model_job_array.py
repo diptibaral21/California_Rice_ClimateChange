@@ -17,8 +17,9 @@ from tqdm import tqdm
 
 #file paths
 
-file_path = "/group/moniergrp/dbaral/run_project/input_data/gridmet_hist_model_input"
-save_path = "/group/moniergrp/dbaral/run_project/output_data/historical_model"
+CLIMATE_DIR = "/group/moniergrp/dbaral"
+file_path = os.path.join(CLIMATE_DIR, "run_project/input_data/gridmet_hist_model_input")
+save_path = os.path.join(CLIMATE_DIR, "run_project/output_data/historical_model")
 
 #helper functions
 
@@ -87,62 +88,76 @@ def remove_outliers_with_cooks_distance(X, Y, df_all):
     return X[mask], Y[mask], df_all.loc[mask].copy()
 
 
-# def fit_and_save_full_sample_lasso(X, Y, feature_cols, save_path, model_name, trial=45):
-#     """
-#     Fit full-sample Lasso for a given dataset (trial).
-#     - trial is used as random_state in LassoCV for reproducibility.
+def fit_and_save_full_sample_lasso(X, Y, feature_cols, save_path):
+    """
+    Fit full-sample Lasso for a given dataset (trial).
+    - trial is used as random_state in LassoCV for reproducibility.
 
-#     Here we fit the full-sample Lasso model and save the following:
-#         - full pipelne(joblib)
-#         - standardized lasso coefficients (CSV)
-#         - unstandardized lasso coefficients (CSV)
-#         - model metadata (alpha, intercept, R2)
-#     """
-#     alphas = [5,4,3,2,1,0.5,0.1,0.05,0.01,0.005,0.001]
-#     pipe = Pipeline([
-#         ("scaler", StandardScaler()),
-#         ("lasso", LassoCV(
-#             alphas=alphas,
-#             cv=5,
-#             max_iter=int(1e6),
-#             random_state=45  
-#         ))
-#     ])
-#     #fit the model
-#     pipe.fit(X, Y)
+    Here we fit the full-sample Lasso model and save the following:
+        - full pipelne(joblib)
+        - standardized lasso coefficients (CSV)
+        - unstandardized lasso coefficients (CSV)
+        - model metadata (alpha, R2)
+    """
+    unique_counties = df_filtered['county'].unique()
 
-#     #extract components
-#     lasso = pipe.named_steps['lasso']
-#     scaler = pipe.named_steps['scaler']
+    train_indices = []
+    test_indices = []
 
-#     #coefficients
-#     coef_std = lasso.coef_
-#     coef_unstd = coef_std / scaler.scale_
-#     intercept_unstd = lasso.intercept_ - np.sum((scaler.mean_ / scaler.scale_) * coef_std)
+    for county in unique_counties:
+        county_mask = df_filtered['county'] == county
+        county_indices = df_filtered[county_mask].index
 
-#     #save full pipeline 
-#     os.makedirs(save_path, exist_ok=True)
-#     joblib.dump(pipe, os.path.join(save_path, f"{model_name}_pipeline.pkl"))
+        train_index_c, test_index_c = train_test_split(county_indices, test_size=0.3, random_state = i )
+        train_indices.extend(train_index_c)
+        test_indices.extend(test_index_c)
+    X_train = X.loc[train_indices]
+    X_test = X.loc[test_indices]
+    y_train = Y.loc[train_indices]
+    y_test = Y.loc[test_indices]
+    
+    alphas = [5,4,3,2,1,0.5,0.1,0.05,0.01,0.005,0.001]
+    pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("lasso", LassoCV(
+            alphas=alphas,
+            cv=5,
+            max_iter=int(1e6),
+            random_state=45  
+        ))
+    ])
+    #fit the model
+    pipe.fit(X_train, y_train)
 
-#     #save standardized coefficients
+    #extract components
+    lasso = pipe.named_steps['lasso']
+    scaler = pipe.named_steps['scaler']
 
-#     coef_std_df = pd.Series(coef_std, index=feature_cols)
-#     coef_std_df.to_csv(os.path.join(save_path, f"{model_name}_standardized_coef.csv"), header = ["coefficient"])
+    #coefficients
+    coef_std = lasso.coef_
+    coef_unstd = coef_std / scaler.scale_
+    #intercept_unstd = lasso.intercept_ - np.sum((scaler.mean_ / scaler.scale_) * coef_std)
 
-#     #save unstandardized coefficients
+    #save full pipeline 
+    os.makedirs(save_path, exist_ok=True)
+    joblib.dump(pipe, os.path.join(save_path, "gridmet_hist_lasso_model_pipeline.pkl"))
 
-#     coef_unstd_df = pd.Series(coef_unstd, index=feature_cols)
-#     coef_unstd_df.to_csv(os.path.join(save_path, f"{model_name}_unstandardized_coef.csv"), header = ["coefficient"])
+    #save standardized coefficients
 
-#     #save metadata
+    coef_std_df = pd.Series(coef_std, index=feature_cols)
+    coef_std_df.to_csv(os.path.join(save_path, "gridmet_hist_lasso_model_standardized_coef.csv"), header = ["coefficient"])
 
-#     metadata = {
-#         "gcm": gcm, 
-#         "scenario": scenario,
-#         "alpha_selected": lasso.alpha_,
-#         "intercept_unstandardized": intercept_unstd,
-#         "r_squared": pipe.score(X,Y)
-#     }
+    # #save unstandardized coefficients
+
+    # coef_unstd_df = pd.Series(coef_unstd, index=feature_cols)
+    # coef_unstd_df.to_csv(os.path.join(save_path, f"{model_name}_unstandardized_coef.csv"), header = ["coefficient"])
+
+    #save metadata
+
+    metadata = {
+        "alpha_selected": lasso.alpha_,
+        "r_squared": pipe.score(X,Y)
+    }
 
         
 def run_70_30_validation(X, Y, df_filtered, feature_cols, trial, n_iterations=1000):
@@ -201,7 +216,7 @@ def run_70_30_validation(X, Y, df_filtered, feature_cols, trial, n_iterations=10
                 alphas=alphas, 
                 cv=5, 
                 max_iter=int(1e6),
-                random_state=45  #fixed seed so only the split changes
+                random_state=45  
             ))
         ])
         #fit model
@@ -211,16 +226,16 @@ def run_70_30_validation(X, Y, df_filtered, feature_cols, trial, n_iterations=10
         lasso = pipe_lasso_70_30_split.named_steps['lasso']
         scaler = pipe_lasso_70_30_split.named_steps['scaler']
 
-        #convert to unstandardized coefficients
+        #coefficients
         coef_std = lasso.coef_
-        coef_unstd = coef_std/scaler.scale_
+        # coef_unstd = coef_std/scaler.scale_
 
-        intercept_unstd = (lasso.intercept_ - np.sum((scaler.mean_/scaler.scale_) * coef_std))
+        # intercept_unstd = (lasso.intercept_ - np.sum((scaler.mean_/scaler.scale_) * coef_std))
 
-        #save coefficients (long format)
+        #save standardized coefficients (long format)
         coef_df_iteration = pd.DataFrame({
             'feature': feature_cols, 
-            'coefficient': coef_unstd, 
+            'coefficient': coef_std, 
             'iteration': i
         })
         
@@ -256,10 +271,10 @@ def run_70_30_validation(X, Y, df_filtered, feature_cols, trial, n_iterations=10
     final_coef_df = pd.concat(all_coef_list, ignore_index = True)
     metrics_df = pd.DataFrame(metrics_list)
 
-    final_coef_df.to_csv(os.path.join(save_path, 'lasso_1000_models_coefficients.csv'), index=False)
+    final_coef_df.to_csv(os.path.join(save_path, 'gridmet_lasso_1000_models_coefficients.csv'), index=False)
 
     metrics_df.to_csv(
-        os.path.join(save_path, "lasso_1000_model_validation_metrics.csv"), index=False)
+        os.path.join(save_path, "gridmet_lasso_1000_model_validation_metrics.csv"), index=False)
     return final_coef_df, metrics_df 
     
             
