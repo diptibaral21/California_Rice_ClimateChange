@@ -31,6 +31,7 @@ save_path = "/group/moniergrp/dbaral/run_project/output_data/historical_model"
 #     #13 diff climate models * 2 scenarios = 26 trials
 #     #each job_id will give a separate pipeline and validation results
 
+#this goes in bash script
 # #define datasets 
 #     #list all gcms and scenarios and create all model-scenario combinations
 
