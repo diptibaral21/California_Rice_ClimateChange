@@ -10,7 +10,7 @@
 # setting home directory
 #SBATCH -D /group/moniergrp/dbaral/run_project/historical_analysis
 
-# setting medium priority
+# setting high priority
 #SBATCH -p high
 
 # setting standard error output
@@ -28,4 +28,4 @@
 # setting the max time
 #SBATCH -t 12:00:00
 
-srun python -u lasso_model_job_array.py $SLURM_ARRAY_TASK_ID
+srun python -u lasso_model_job_array.py 
