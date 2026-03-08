@@ -122,7 +122,7 @@ def fit_and_save_full_sample_lasso(X, Y, feature_cols, save_path):
         ("lasso", LassoCV(
             alphas=alphas,
             cv=5,
-            max_iter=int(1e6),
+            max_iter=int(1e7),
             random_state=45  
         ))
     ])
@@ -160,7 +160,7 @@ def fit_and_save_full_sample_lasso(X, Y, feature_cols, save_path):
     }
 
         
-def run_70_30_validation(X, Y, df_filtered, feature_cols, n_iterations=1000):
+def run_70_30_validation(X, Y, df_filtered, feature_cols, n_iterations=10):
     """
     This function repeats the 70/30 split 1000 times and fits Lasso each time.
     70/30 split is done within each country because if we do 70/30 split in full dataset then there is
@@ -189,7 +189,7 @@ def run_70_30_validation(X, Y, df_filtered, feature_cols, n_iterations=1000):
     all_coef_list = []
     metrics_list = []
     
-    for i in tqdm(range(1, n_iterations+1), desc=f"Running Lasso 1000 models"):
+    for i in tqdm(range(1, n_iterations+1), desc=f"Running Lasso 10 models"):
     # Perform county-wise 70-30 train/test split
         unique_counties = df_filtered['county'].unique()
 
@@ -271,10 +271,10 @@ def run_70_30_validation(X, Y, df_filtered, feature_cols, n_iterations=1000):
     final_coef_df = pd.concat(all_coef_list, ignore_index = True)
     metrics_df = pd.DataFrame(metrics_list)
 
-    final_coef_df.to_csv(os.path.join(save_path, 'gridmet_lasso_1000_models_coefficients.csv'), index=False)
+    final_coef_df.to_csv(os.path.join(save_path, 'gridmet_lasso_10_models_coefficients.csv'), index=False)
 
     metrics_df.to_csv(
-        os.path.join(save_path, "gridmet_lasso_1000_model_validation_metrics.csv"), index=False)
+        os.path.join(save_path, "gridmet_lasso_10_model_validation_metrics.csv"), index=False)
     return final_coef_df, metrics_df 
     
             
@@ -295,9 +295,9 @@ if __name__ == "__main__":
     # trial = 45
     # fit_and_save_full_sample_lasso(X, Y, feature_cols, save_path, model_name, trial=45)
 
-    #Run repeated validation (1000 splits)
+    #Run repeated validation (10 splits)
 
-    validation_results = run_70_30_validation(X, Y, df_filtered, feature_cols, n_iterations=1000)
+    validation_results = run_70_30_validation(X, Y, df_filtered, feature_cols, n_iterations=10)
 
     print("Finished running the model")
     
