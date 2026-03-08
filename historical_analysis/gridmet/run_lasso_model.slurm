@@ -20,12 +20,12 @@
 #SBATCH -o /group/moniergrp/dbaral/run_project/slurm_log/slurm_output/stoutput_%j.txt
 
 # setting memory and cpus
-#SBATCH --mem=80G
-#SBATCH --cpus-per-task=6
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=1
 
 #SBATCH --array=1
 
 # setting the max time
-#SBATCH -t 12:00:00
+#SBATCH -t 24:00:00
 
 srun python -u 9.lasso_model.py 
