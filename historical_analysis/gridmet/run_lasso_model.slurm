@@ -20,10 +20,8 @@
 #SBATCH -o /group/moniergrp/dbaral/run_project/slurm_log/slurm_output/stoutput_%j.txt
 
 # setting memory and cpus
-#SBATCH --mem=20G
-#SBATCH --cpus-per-task=1
-
-#SBATCH --array=1
+#SBATCH --mem=40G
+#SBATCH --cpus-per-task=4
 
 # setting the max time
 #SBATCH -t 24:00:00
