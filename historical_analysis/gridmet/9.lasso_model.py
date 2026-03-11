@@ -338,6 +338,18 @@ def fit_and_save_full_sample_lasso_no_intercept(
 
     return pipe, coef_df, metadata
 
+    # also save climte centering means separately
+    # this makes the projection easier
+
+    means_df = pd.DataFrame({
+        "feature": climate_cols,
+        "mean": [climate_center_means[c] for c in climate_cols]
+    })
+
+    means_df.to_csv(
+        os.path.join(save_path, "gridmet_hist_climate_center_means.csv"), 
+        index=False
+    )
 
 # =========================================================
 # Helper function 5
@@ -362,10 +374,7 @@ def run_1000_validation_no_intercept(
             - test R2 stability
             - train/test RMSE stability
             - selected alpha stability
-
-    Important:
-        This is not the final model used for future projection.
-        This is only for robustness analysis.
+            - use for future projection 
 
     County-wise split:
         We split within county so that every county is represented
