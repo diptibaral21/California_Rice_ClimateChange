@@ -2,7 +2,7 @@
 
 #SBATCH -A moniergrp
 #SBATCH -J loca_yield_proj
-#SBATCH -D /group/moniergrp/dbaral/run_project
+#SBATCH -D /group/moniergrp/dbaral/ruun_project
 #SBATCH -p high
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=24G
@@ -21,7 +21,7 @@ echo "LOCA_SSP   = ${LOCA_SSP}"
 source ~/.bashrc
 conda activate myenv
 
-srun python -u /group/moniergrp/dbaral/run_project/future_analysis/loca_hist_yield_projection.py \
+srun python -u /group/moniergrp/dbaral/California_Rice_ClimateChange/historical_analysis/loca_hist_yield_projection.py \
     --loca_model "${LOCA_MODEL}" \
     --ssp "${LOCA_SSP}"
 
