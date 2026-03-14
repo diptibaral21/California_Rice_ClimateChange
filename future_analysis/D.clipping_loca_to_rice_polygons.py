@@ -36,8 +36,8 @@ for f in os.listdir(shared_dir):
 
         #open LOCA file
         ds = xr.open_dataset(file_path, engine = 'netcdf4', chunks={'time': 365})
-        #select time slice 2030-2100
-        ds = ds.sel(time=slice('2030-01-01', '2100-12-31'))
+        #select time slice 2020-2100
+        ds = ds.sel(time=slice('2020-01-01', '2100-12-31'))
         clipped_vars={}
         #loop through all variables in the dataset
         for var in ds.data_vars:
