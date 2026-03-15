@@ -12,6 +12,6 @@ Nine rice growing counties in the Sacramento Valley, California
 
 ![Rice Map](maps/rice_area_change_animation.gif)
 
-# Status: 
+# Status 
 Work in progress as part of my MS thesis
 
