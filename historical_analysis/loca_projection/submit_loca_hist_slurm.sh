@@ -43,18 +43,14 @@ for model in "${models[@]}"; do
         # -----------------------------
         # Submit a SLURM job
         # -----------------------------
-        sbatch \
+         # --export passes environment variables to the SLURM job
+        # ALL means export all existing environment variables
+        # We also pass two custom variables:
+        #   LOCA_MODEL = current climate model
+        #   LOCA_SSP   = current SSP scenario
 
-            # --export passes environment variables to the SLURM job
-            # ALL means export all existing environment variables
-            # We also pass two custom variables:
-            #   LOCA_MODEL = current climate model
-            #   LOCA_SSP   = current SSP scenario
-            --export=ALL,LOCA_MODEL="${model}",LOCA_SSP="${ssp}" \
-
-            # SLURM script that will actually run the Python projection
+        sbatch --export=ALL,LOCA_MODEL="${model}",LOCA_SSP="${ssp}" \
             run_loca_hist_projection.slurm
 
     done  # end SSP loop
-
 done  # end model loop
