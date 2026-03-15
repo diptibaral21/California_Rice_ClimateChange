@@ -4,7 +4,7 @@
 #SBATCH -J loca_yield_proj
 #SBATCH -D /group/moniergrp/dbaral/run_project
 #SBATCH -p high
-#SBATCH --cpus-per-task=2
+#SBATCH --cpus-per-task=4 
 #SBATCH --mem=10G
 #SBATCH -t 24:00:00
 #SBATCH -o /group/moniergrp/dbaral/run_project/slurm_log/slurm_output/loca_proj_%j.out
