@@ -11,17 +11,14 @@ import geopandas as gpd
 import rioxarray 
 import warnings
 
-#file paths -- shared_dir to access data and my_dir to save data
-shared_dir = '/group/moniergrp/LOCA2_CA'
-my_dir = '/group/moniergrp/LOCA2_CA_clipped'
+#file paths -- my_dir to access data and output_dir to save data
+my_dir = '/group/moniergrp/dbaral/run_project/intermediate_data/loca_future_rice_nc'
+output_dir = '/group/moniergrp/dbaral/run_project/intermediate_data/loca_future_rice_temp_csv'
 
-#models = ['ACCESS-CM2', 'CNRM-ESM2-1', 'EC-Earth 3', 'EC-Earth3-Veg', 'GFDL-ESM4', 'INM-CM5-0', 'MPI-ESM1-2-HR', 'MRI-ESM2-0','FGOALS-g3', 'HadGEM3-GC31-LL', 'IPSL-CM6A-LR', 'KACE-1-0-G',  'MIROC6']
-
-models = ['HadGEM3-GC31-LL', 'IPSL-CM6A-LR', 'MIROC6'] # for the last three models 
+models = ['ACCESS-CM2', 'CNRM-ESM2-1', 'EC-Earth 3', 'EC-Earth3-Veg', 'GFDL-ESM4', 'INM-CM5-0', 'MPI-ESM1-2-HR', 'MRI-ESM2-0','FGOALS-g3', 'HadGEM3-GC31-LL', 'IPSL-CM6A-LR', 'KACE-1-0-G',  'MIROC6']
 variables = ['tasmin', 'tasmax']
 scenarios = ['ssp245', 'ssp585']
 
-output_dir = "/group/moniergrp/dbaral/run_project/input_data/loca2"
 
 for model in models:
     for scenario in scenarios:
