@@ -60,12 +60,12 @@ print(f"Running projection for LOCA model = {loca_model}, SSP = {ssp}")
 def load_loca_data(loca_model, ssp):
     """
     Expected file pattern:
-        {LOCA_MODEL}_{SSP}_r1i1p1f1_Lasso_Model_Input_1979_2023.csv
+        {LOCA_MODEL}_{SSP}_r1i1p1f1_1979_2023_Lasso_Model_Input_1979_2023.csv
 
     Example:
-        ACCESS-CM2_ssp245_r1i1p1f1_Lasso_Model_Input_1979_2023.csv
+        ACCESS-CM2_ssp245_r1i1p1f1_1979_2023_Lasso_Model_Input_1979_2023.csv
     """
-    filename = f"{loca_model}_{ssp}_r1i1p1f1_Lasso_Model_Input_1979_2023.csv"
+    filename = f"{loca_model}_{ssp}_r1i1p1f1_1979_2023_Lasso_Model_Input_1979_2023.csv"
     fp = os.path.join(loca_input_dir, filename)
 
     if not os.path.exists(fp):
