@@ -2,6 +2,7 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
+DEBUG = True
 
 # =========================================================
 # Paths
@@ -198,6 +199,20 @@ def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979
         if col not in training_means:
             raise ValueError(f"Training mean not found for feature: {col}")
         df_model[col] = df_model[col] - training_means[col]
+        if DEBUG:
+            print("\n=== DEBUG 3: CENTERING CHECK ===")
+
+            for col in climate_cols[:5]:
+                raw_mean = df[col].mean()
+                centered_mean = df_model[col].mean()
+                training_mean = training_means[col]
+
+                print(f"\nFeature: {col}")
+                print(f"  Raw LOCA mean: {raw_mean:.3f}")
+                print(f"  Training mean: {training_mean:.3f}")
+                print(f"  Centered mean: {centered_mean:.3f}")
+
+            print("\n Centered mean should be ~0")
 
     # squared terms
     for col in climate_cols:
@@ -232,6 +247,14 @@ def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979
 
     # reorder exactly like coefficients
     X_df = X_df.reindex(columns=feature_cols_final)
+    if DEBUG:
+        print("\n=== DEBUG 4: DESIGN MATRIX ===")
+        print("Shape:", X_df.shape)
+        print("Any NaNs:", X_df.isna().any().any())
+
+        print("\nSample stats:")
+        print(X_df.iloc[:, :5].describe())
+
 
     if X_df.isna().any().any():
         missing_cols = X_df.columns[X_df.isna().any()].tolist()
@@ -341,9 +364,36 @@ def calculate_area_weighted_california_yield(pred_all_df, area_df):
 # Main
 # =========================================================
 df_loca, loca_fp = load_loca_data(loca_model, ssp)
+if DEBUG:
+    print("\n=== DEBUG 1: LOCA RAW DATA ===")
+    print("File:", loca_fp)
+    print("Shape:", df_loca.shape)
+
+    check_cols = ["tmmn_bo", "tmmx_bo", "tmean_bo"]
+
+    print("\nSummary stats:")
+    print(df_loca[check_cols].describe())
+
+    print("\nMeans:")
+    for col in check_cols:
+        print(col, df_loca[col].mean())
+
+    print("\n If values ~280–310 → Kelvin ")
+    print(" If values ~5–30 → Celsius ")
+
 area_df = load_area_data()
 coef_long, coef_wide = load_coefficient_matrix(coef_file)
 training_means = load_training_means()
+
+if DEBUG:
+    print("\n=== DEBUG 2: TRAINING MEANS ===")
+    print("Total features:", len(training_means))
+
+    sample_keys = list(training_means.keys())[:10]
+    print("Sample features:", sample_keys)
+
+    for k in sample_keys:
+        print(f"{k}: {training_means[k]}")
 
 print(f"Loaded LOCA file: {loca_fp}")
 print(f"LOCA rows: {len(df_loca)}")
@@ -361,6 +411,14 @@ print("Projection design matrix shape:", X_df.shape)
 
 pred_matrix = predict_all_models(X_df, coef_wide)
 print("Prediction matrix shape:", pred_matrix.shape)
+if DEBUG:
+    print("\n=== DEBUG 5: PREDICTIONS ===")
+    print("Shape:", pred_matrix.shape)
+    print("Min:", np.min(pred_matrix))
+    print("Max:", np.max(pred_matrix))
+    print("Mean:", np.mean(pred_matrix))
+
+    print("\n Expected yield ~7000–11000")
 
 county_year_summary_df, county_year_all_df = build_prediction_output(
     df_model=df_model,
@@ -373,6 +431,12 @@ statewide_summary_df, statewide_all_iter_df = calculate_area_weighted_california
     area_df=area_df
 )
 
+if DEBUG:
+    print("\n=== DEBUG 6: FINAL STATEWIDE ===")
+    print(statewide_summary_df.head())
+    print("\nSummary stats:")
+    print(statewide_summary_df.describe())
+    
 # output naming
 tag = f"{loca_model}_{ssp}"
 
