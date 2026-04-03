@@ -2,7 +2,7 @@
 
 #SBATCH -A moniergrp
 #SBATCH -J loca_future_ensemble
-#SBATCH -D /group/moniergrp/dbaral/run_project
+#SBATCH -D /group/moniergrp/dbaral/California_Rice_ClimateChange
 #SBATCH -p high
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=10G
