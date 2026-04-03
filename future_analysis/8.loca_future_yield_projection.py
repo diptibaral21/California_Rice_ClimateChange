@@ -60,12 +60,12 @@ print(f"Running projection for LOCA model = {loca_model}, SSP = {ssp}")
 def load_loca_data(loca_model, ssp):
     """
     Expected file pattern:
-        {LOCA_MODEL}_{SSP}_r1i1p1f1_Lasso_Model_Input_2030_2100.csv
+        {LOCA_MODEL}_{SSP}_r1i1p1f1_Lasso_Model_Input_2020_2100.csv
 
     Example:
-        ACCESS-CM2_ssp245_r1i1p1f1_Lasso_Model_Input_1990_2010.csv
+        ACCESS-CM2_ssp245_r1i1p1f1_Lasso_Model_Input_2020_2100.csv
     """
-    filename = f"{loca_model}_{ssp}_r1i1p1f1_Lasso_Model_Input_2030_2100.csv"
+    filename = f"{loca_model}_{ssp}_r1i1p1f1_Lasso_Model_Input_2020_2100.csv"
     fp = os.path.join(loca_input_dir, filename)
 
     if not os.path.exists(fp):
@@ -213,8 +213,26 @@ def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979
     # ensure all expected county dummy columns exist
     county_dummies = county_dummies.reindex(columns=county_dummy_cols, fill_value=0)
 
-    # county-specific time trends
-    time_trend = df_model["year"] - base_year
+    # county-specific time trends (Two-options)
+    cutoff_year = 2023
+
+    #raw trend - same as training
+    time_trend_raw = df_model["year"] - base_year
+    #trend cut off at 2023
+    trend_2023 = cutoff_year - base_year
+
+
+    # =========================================================
+      # Choose option 1 and run (comment out optino 2) then choose option 2 and run 
+    # =========================================================
+
+
+    # #option 1: Sutained time trend
+    # time_trend = time_trend_raw
+
+    #option 2: stopped trend at 2023 (climate only signal)
+    time_trend = time_trend_raw.clip(upper=trend_2023)
+
     county_trends = county_dummies.multiply(time_trend, axis=0)
     county_trends.columns = [c.replace("county_", "trend_") for c in county_trends.columns]
 
@@ -373,8 +391,11 @@ statewide_summary_df, statewide_all_iter_df = calculate_area_weighted_california
     area_df=area_df
 )
 
-# output naming
-tag = f"{loca_model}_{ssp}"
+    # =========================================================
+      # output naming (different naming convention for option 1 and 2)
+    # =========================================================
+
+tag = f"{loca_model}_{ssp}_stopped"
 
 county_year_summary_fp = os.path.join(output_dir, f"{tag}_county_year_yield_summary.csv")
 county_year_all_fp = os.path.join(output_dir, f"{tag}_county_year_yield_all_1000_models.csv")
