@@ -181,13 +181,13 @@ def build_loca_historical_ensemble(model_list, ssp):
 def save_ensemble_outputs(ensemble_all_df, ensemble_summary_df, ssp):
     all_fp = os.path.join(
         ensemble_output_dir,
-        f"loca_13model_{}_all_iterations.csv"
+        f"loca_13model_{ssp}_all_iterations.csv"
     )
 
     summary_fp = os.path.join(
         ensemble_output_dir,
-        f"loca_13model_{}_ensemble_summary.csv"
-    )
+        f"loca_13model_{ssp}_ensemble_summary.csv"
+        )
 
     ensemble_all_df.to_csv(all_fp, index=False)
     ensemble_summary_df.to_csv(summary_fp, index=False)
@@ -251,7 +251,7 @@ def plot_loca_historical_ensemble(ensemble_summary_df, obs_df, ssp):
         label="Observed"
     )
 
-    ax.set_ylabel("Yield ton/acre")
+    ax.set_ylabel("Yield kg/ha")
     ax.set_xlabel("")
     ax.set_xlim(df_plot["year"].min(), df_plot["year"].max())
 
@@ -285,7 +285,13 @@ def main():
     print(f"SSP tag used in filenames: {ssp}")
 
     obs_df = load_observed_yield()
-
+    
+    obs_df = (
+    obs_df
+    .groupby("year")["yield_kg_ha"]
+    .mean()
+    .reset_index()
+)
     ensemble_all_df, ensemble_summary_df = build_loca_historical_ensemble(
         model_list=model_list,
         ssp=ssp

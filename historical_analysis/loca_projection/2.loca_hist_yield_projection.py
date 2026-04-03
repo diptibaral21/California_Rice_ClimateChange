@@ -33,7 +33,7 @@ area_file = os.path.join(
     "county_rice_area_static.csv"
 )
 
-# training means file -- recommended for consistency
+# training means file 
 center_means_file = os.path.join(
     PROJECT_DIR,
     "output_data",
@@ -195,24 +195,25 @@ def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979
         raise ValueError(f"LOCA input is missing required climate predictors: {missing_climate}")
 
     # center using training means
-    for col in climate_cols:
-        if col not in training_means:
-            raise ValueError(f"Training mean not found for feature: {col}")
-        df_model[col] = df_model[col] - training_means[col]
-        if DEBUG:
-            print("\n=== DEBUG 3: CENTERING CHECK ===")
+    valid_cols = [col for col in training_means.keys() if col in df_model.columns]
 
-            for col in climate_cols[:5]:
-                raw_mean = df[col].mean()
-                centered_mean = df_model[col].mean()
-                training_mean = training_means[col]
+    for col in valid_cols:
+        df_model[col] = df_model[col].astype(float) - float(training_means[col])
 
-                print(f"\nFeature: {col}")
-                print(f"  Raw LOCA mean: {raw_mean:.3f}")
-                print(f"  Training mean: {training_mean:.3f}")
-                print(f"  Centered mean: {centered_mean:.3f}")
+    if DEBUG:
+        print("\n=== DEBUG 3: CENTERING CHECK ===")
+        
+        for col in valid_cols[:5]:
+            raw_mean = df[col].mean()
+            centered_mean = df_model[col].mean()
+            training_mean = training_means[col]
 
-            print("\n Centered mean should be ~0")
+            print(f"\nFeature: {col}")
+            print(f"  Raw LOCA mean: {raw_mean:.3f}")
+            print(f"  Training mean: {training_mean:.3f}")
+            print(f"  Centered mean: {centered_mean:.3f}")
+
+        print("\n Centered mean should be ~0")
 
     # squared terms
     for col in climate_cols:
