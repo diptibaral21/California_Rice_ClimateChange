@@ -15,10 +15,9 @@ import warnings
 my_dir = '/group/moniergrp/dbaral/run_project/intermediate_data/loca_future_rice_nc'
 output_dir = '/group/moniergrp/dbaral/run_project/intermediate_data/loca_future_rice_temp_csv'
 
-models = ['ACCESS-CM2', 'CNRM-ESM2-1', 'EC-Earth 3', 'EC-Earth3-Veg', 'GFDL-ESM4', 'INM-CM5-0', 'MPI-ESM1-2-HR', 'MRI-ESM2-0','FGOALS-g3', 'HadGEM3-GC31-LL', 'IPSL-CM6A-LR', 'KACE-1-0-G',  'MIROC6']
+models = ['ACCESS-CM2', 'CNRM-ESM2-1', 'EC-Earth3', 'EC-Earth3-Veg', 'GFDL-ESM4', 'INM-CM5-0', 'MPI-ESM1-2-HR', 'MRI-ESM2-0','FGOALS-g3', 'HadGEM3-GC31-LL', 'IPSL-CM6A-LR', 'KACE-1-0-G',  'MIROC6']
 variables = ['tasmin', 'tasmax']
 scenarios = ['ssp245', 'ssp585']
-
 
 for model in models:
     for scenario in scenarios:

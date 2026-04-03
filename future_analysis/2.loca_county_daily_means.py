@@ -16,8 +16,8 @@ import os
 CLIMATE_DIR = "group/moniergrp/dbaral"
 
 shape_file = os.path.join(CLIMATE_DIR, "run_project/input_data/shape_files")
-loca_file = os.path.join(CLIMATE_DIR, "run_project/input_data/loca2")
-output_dir = os.path.join(CLIMATE_DIR, "run_project/intermediate_data/LOCA_csv")
+loca_file = os.path.join(CLIMATE_DIR, "run_project/intermediate_data/loca_future_rice_nc")
+output_dir = os.path.join(CLIMATE_DIR, "run_project/intermediate_data/loca_future_rice_temp_csv")
 
 #load shape file
 counties = gpd.read_file(os.path.join(shape_file, "CA_9counties_shapefile.shp"))
