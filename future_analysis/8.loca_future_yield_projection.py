@@ -32,14 +32,6 @@ area_file = os.path.join(
     "county_rice_area_static.csv"
 )
 
-# training means file -- recommended for consistency
-center_means_file = os.path.join(
-    PROJECT_DIR,
-    "output_data",
-    "historical_model",
-    "gridmet_hist_climate_center_means.csv"
-)
-
 # =========================================================
 # Argument parser
 # =========================================================
@@ -135,35 +127,38 @@ def load_coefficient_matrix(coef_file):
 
 # =========================================================
 # Helper 4
-# Load training means
+# Load LOCA historical normalization stats
 # =========================================================
-def load_training_means():
+def load_loca_hist_stats(loca_model):
     """
-    Recommended: save climate centering means from training and use them here.
-    Expected columns:
-        feature
-        mean
+    load mean and std computed from historical LOCA (1979-2023)
     """
-    if not os.path.exists(center_means_file):
-        raise FileNotFoundError(
-            f"Training centering means file not found: {center_means_file}"
-        )
+    stats_fp = os.path.join(
+        PROJECT_DIR, 
+        "output_data",
+        "projection",
+        "loca_hist",
+        f"{loca_model}_historical_loca_hist_standardization_stats.csv"
+    )
+    if not os.path.exists(stats_fp):
+        raise FileNotFoundError(f"LOCA stats file not found: {stats_fp}")
+    stats_df = pd.read_csv(stats_fp)
 
-    means_df = pd.read_csv(center_means_file)
-
-    required_cols = {"feature", "mean"}
-    missing = required_cols - set(means_df.columns)
+    required_cols = {"feature", "mean", "std"}
+    missing = required_cols - set(stats_df.columns)
     if missing:
-        raise ValueError(f"Training means file missing required columns: {missing}")
+        raise ValueError(f"Stats file missing columns: {missing}")
+    
+    loca_means = dict(zip(stats_df["feature"], stats_df["mean"]))
+    loca_stds = dict(zip(stats_df["feature"], stats_df["std"]))
 
-    return dict(zip(means_df["feature"], means_df["mean"]))
-
+    return loca_means, loca_stds, stats_fp
 
 # =========================================================
 # Helper 5
 # Build projection design matrix exactly like training
 # =========================================================
-def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979):
+def build_projection_design_matrix(df, coef_wide, loca_means, loca_stds, base_year=1979):
     """
     Rebuild X exactly like training:
       - center climate vars using TRAINING means
@@ -193,11 +188,11 @@ def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979
     if missing_climate:
         raise ValueError(f"LOCA input is missing required climate predictors: {missing_climate}")
 
-    # center using training means
+    # standardize using LOCA mean and std
     for col in climate_cols:
-        if col not in training_means:
-            raise ValueError(f"Training mean not found for feature: {col}")
-        df_model[col] = df_model[col] - training_means[col]
+        if col not in loca_means or col not in loca_stds:
+            raise ValueError(f"LOCA stats not found for feature: {col}")
+        df_model[col] = (df_model[col] - loca_means[col])/loca_stds[col]
 
     # squared terms
     for col in climate_cols:
@@ -227,7 +222,7 @@ def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979
     # =========================================================
 
 
-    # #option 1: Sutained time trend
+    # #option 1: Sustained time trend
     # time_trend = time_trend_raw
 
     #option 2: stopped trend at 2023 (climate only signal)
@@ -361,7 +356,7 @@ def calculate_area_weighted_california_yield(pred_all_df, area_df):
 df_loca, loca_fp = load_loca_data(loca_model, ssp)
 area_df = load_area_data()
 coef_long, coef_wide = load_coefficient_matrix(coef_file)
-training_means = load_training_means()
+loca_means, loca_stds, stats_fp = load_loca_hist_stats(loca_model)
 
 print(f"Loaded LOCA file: {loca_fp}")
 print(f"LOCA rows: {len(df_loca)}")
@@ -371,7 +366,8 @@ print(f"Loaded {coef_wide.shape[1]} final features")
 df_model, X_df = build_projection_design_matrix(
     df=df_loca,
     coef_wide=coef_wide,
-    training_means=training_means,
+    loca_means=loca_means,
+    loca_stds=loca_stds,
     base_year=1979
 )
 
