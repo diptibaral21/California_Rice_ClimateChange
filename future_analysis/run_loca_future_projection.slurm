@@ -21,7 +21,7 @@ echo "LOCA_SSP   = ${LOCA_SSP}"
 source ~/.bashrc
 conda activate myenv
 
-srun python -u /group/moniergrp/dbaral/California_Rice_ClimateChange/future_analysis/loca_future_yield_projection.py \
+srun python -u /group/moniergrp/dbaral/California_Rice_ClimateChange/future_analysis/8.loca_future_yield_projection.py \
     --loca_model "${LOCA_MODEL}" \
     --ssp "${LOCA_SSP}"
 

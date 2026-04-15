@@ -18,6 +18,6 @@ echo "Job started on $(date)"
 source ~/.bashrc
 conda activate myenv
 
-srun python -u /group/moniergrp/dbaral/California_Rice_ClimateChange/future_analysis/loca_future_ensemble.py \
+srun python -u /group/moniergrp/dbaral/California_Rice_ClimateChange/future_analysis/9.loca_future_ensemble.py \
 
 echo "Job finished on $(date)"
