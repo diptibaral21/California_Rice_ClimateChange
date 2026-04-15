@@ -34,7 +34,7 @@ def load_raw_data():
     Returns:
         df = raw dataframe
     """
-    df = pd.read_csv(os.path.join(file_path, "Lasso_Model_Input_Variables_1979_2023_v2.csv"))
+    df = pd.read_csv(os.path.join(file_path, "Lasso_Model_Input_Variables_1979_2023.csv"))
     return df
 
 
@@ -51,18 +51,18 @@ def build_design_matrix(df):
         Yield =
             county fixed effects
           + county-specific time trends
-          + centered climate variables
-          + squared centered climate variables
+          + normalize climate variables
+          + squared normalized climate variables
 
     Important modeling choices:
         1. No separate intercept in the model
         2. All county dummy variables are included
         3. County coefficients act as county fixed effects
         4. Time trend starts at 0, not 1
-        5. Only climate variables are centered
+        5. Only climate variables are normalized
         6. County dummies and county trends are NOT scaled
 
-    Why center only climate variables:
+    Why normalize climate variables:
         This makes county fixed effects easier to interpret.
         County FE then represent county baseline yield under average climate conditions.
 
@@ -72,7 +72,8 @@ def build_design_matrix(df):
         Y                    = response series
         feature_cols_final   = final feature names in order
         climate_cols         = original climate variable names
-        climate_center_means = means used to center climate variables
+        climate_norm_means = means used to normalize climate variables
+        climate_norm_stds  = stds used for normalization
         base_year            = base year used for time trends
     """
 
@@ -91,24 +92,31 @@ def build_design_matrix(df):
     climate_cols = [c for c in df_model.columns if c not in cols_exclude]
 
     # -----------------------------------------------------
-    # Step 3: center only climate variables
-    # This makes county FE interpretable at average climate conditions
+    # Step 3: create squared terms 
     # -----------------------------------------------------
-    climate_center_means = {}
+    squared_cols = []
 
     for col in climate_cols:
+        sq_col = f"{col}_sq"
+        df_model[sq_col] = df_model[col] ** 2
+        squared_cols.append(sq_col)
+
+    # -----------------------------------------------------
+    # Step 4: Normalize linear + squared variables separately
+    # -----------------------------------------------------
+    climate_norm_means = {}
+    climate_norm_stds = {}
+
+    all_climate_cols = climate_cols + squared_cols
+
+    for col in all_climate_cols:
         mean_val = df_model[col].mean()
-        climate_center_means[col] = float(mean_val)
-        df_model[col] = df_model[col] - mean_val
+        std_val = df_model[col].std()
 
-    # -----------------------------------------------------
-    # Step 4: create squared terms from centered climate variables
-    # This preserves the nonlinear relationship around centered values
-    # -----------------------------------------------------
-    for col in climate_cols:
-        df_model[f"{col}_sq"] = df_model[col] ** 2
+        climate_norm_means[col] = float(mean_val)
+        climate_norm_stds[col] = float(std_val)
 
-    squared_cols = [f"{c}_sq" for c in climate_cols]
+        df_model[col] = (df_model[col]- mean_val) / std_val
 
     # -----------------------------------------------------
     # Step 5: create all county dummy variables
@@ -134,8 +142,8 @@ def build_design_matrix(df):
     # -----------------------------------------------------
     # Step 7: combine all components into final design matrix
     # Final X includes:
-    #   - centered climate variables
-    #   - squared centered climate variables
+    #   - normalized climate variables
+    #   - squared normalized climate variables
     #   - county fixed effects
     #   - county-specific time trends
     # -----------------------------------------------------
@@ -147,6 +155,8 @@ def build_design_matrix(df):
         ],
         axis=1
     )
+
+    X_df.to_csv(os.path.join(save_path, "gridmet_tis.csv"), index=False)
 
     # -----------------------------------------------------
     # Step 8: define response
@@ -165,10 +175,10 @@ def build_design_matrix(df):
         Y,
         feature_cols_final,
         climate_cols,
-        climate_center_means,
+        climate_norm_means,
+        climate_norm_stds,
         base_year
     )
-
 
 # =========================================================
 # Helper function 3
@@ -225,6 +235,8 @@ def remove_outliers_with_cooks_distance(df_model, X_df, Y):
     X_filtered = X_df.loc[mask].copy()
     Y_filtered = Y.loc[mask].copy()
 
+    X_filtered.to_csv(os.path.join(save_path, "gridmet_tis_filtered.csv"))
+
     return df_filtered, X_filtered, Y_filtered, threshold
 
 
@@ -238,7 +250,8 @@ def fit_and_save_full_sample_lasso_no_intercept(
     Y,
     feature_cols_final,
     climate_cols,
-    climate_center_means,
+    climate_norm_means,
+    climate_norm_stds,
     base_year,
     save_path
 ):
@@ -270,7 +283,7 @@ def fit_and_save_full_sample_lasso_no_intercept(
     # -----------------------------------------------------
     # Step 2: build LassoCV pipeline with no intercept
     # No StandardScaler here because:
-    #   - we already centered climate variables manually
+    #   - we already normalized climate variables manually
     #   - we do NOT want to scale county dummies
     #   - we do NOT want to scale county trends
     # -----------------------------------------------------
@@ -304,21 +317,21 @@ def fit_and_save_full_sample_lasso_no_intercept(
     })
 
     coef_df.to_csv(
-        os.path.join(save_path, "gridmet_hist_coefficients_no_intercept.csv"),
+        os.path.join(save_path, "gridmet_hist_coefficients_normalized.csv"),
         index=False
     )
 
-    # -----------------------------------------------------
-    # Step 6: save fitted pipeline
-    # -----------------------------------------------------
-    joblib.dump(
-        pipe,
-        os.path.join(save_path, "gridmet_hist_lasso_pipeline_no_intercept.joblib")
-    )
+    # # -----------------------------------------------------
+    # # Step 6: save fitted pipeline
+    # # -----------------------------------------------------
+    # joblib.dump(
+    #     pipe,
+    #     os.path.join(save_path, "gridmet_hist_lasso_pipeline_normalized.joblib")
+    # )
 
     # -----------------------------------------------------
     # Step 7: save metadata
-    # also save centering means and base year because
+    # also save normalizing means, stds, and base year because
     # future prediction must use the same transformation
     # -----------------------------------------------------
     metadata = {
@@ -330,26 +343,14 @@ def fit_and_save_full_sample_lasso_no_intercept(
         "base_year_for_trend": int(base_year),
         "climate_columns": climate_cols,
         "feature_columns_final": feature_cols_final,
-        "climate_center_means": climate_center_means
+        "climate_norm_means": climate_norm_means,
+        "climate_norm_stds": climate_norm_stds
     }
 
-    with open(os.path.join(save_path, "gridmet_hist_model_metadata_no_intercept.json"), "w") as f:
+    with open(os.path.join(save_path, "gridmet_hist_model_metadata_normalized.json"), "w") as f:
         json.dump(metadata, f, indent=2)
 
     return pipe, coef_df, metadata
-
-    # also save climte centering means separately
-    # this makes the projection easier
-
-    means_df = pd.DataFrame({
-        "feature": climate_cols,
-        "mean": [climate_center_means[c] for c in climate_cols]
-    })
-
-    means_df.to_csv(
-        os.path.join(save_path, "gridmet_hist_climate_center_means.csv"), 
-        index=False
-    )
 
 # =========================================================
 # Helper function 5
@@ -528,7 +529,7 @@ if __name__ == "__main__":
     # -----------------------------------------------------
     # Step 2: build explicit design matrix
     # Here we:
-    #   - center only climate variables
+    #   - normalize only climate variables
     #   - create squared climate terms
     #   - create all county fixed effects
     #   - create county-specific time trends
@@ -539,7 +540,8 @@ if __name__ == "__main__":
         Y,
         feature_cols_final,
         climate_cols,
-        climate_center_means,
+        climate_norm_means,
+        climate_norm_stds,
         base_year
     ) = build_design_matrix(df)
 
@@ -562,7 +564,8 @@ if __name__ == "__main__":
         Y=Y_filtered,
         feature_cols_final=feature_cols_final,
         climate_cols=climate_cols,
-        climate_center_means=climate_center_means,
+        climate_norm_means=climate_norm_means,
+        climate_norm_stds=climate_norm_stds,
         base_year=base_year,
         save_path=save_path
     )
