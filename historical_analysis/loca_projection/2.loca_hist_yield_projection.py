@@ -2,7 +2,6 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
-DEBUG = True
 
 # =========================================================
 # Paths
@@ -31,14 +30,6 @@ area_file = os.path.join(
     "input_data",
     "rice_area",
     "county_rice_area_static.csv"
-)
-
-# training means file 
-center_means_file = os.path.join(
-    PROJECT_DIR,
-    "output_data",
-    "historical_model",
-    "gridmet_hist_climate_center_means.csv"
 )
 
 # =========================================================
@@ -136,35 +127,51 @@ def load_coefficient_matrix(coef_file):
 
 # =========================================================
 # Helper 4
-# Load training means
+# compute LOCA-specific mean and std
 # =========================================================
-def load_training_means():
+def compute_loca_stats(df, coef_wide):
     """
     Recommended: save climate centering means from training and use them here.
     Expected columns:
         feature
         mean
+
+    Compute mean and std from LOCA data for each feature variables
+    save the mean and std to reuse them to normalize the future LOCA datasets
     """
-    if not os.path.exists(center_means_file):
-        raise FileNotFoundError(
-            f"Training centering means file not found: {center_means_file}"
-        )
+    feature_cols_final = list(coef_wide.columns)
 
-    means_df = pd.read_csv(center_means_file)
+    # identify expected final features from coefficient file
+    feature_cols_final = list(coef_wide.columns)
 
-    required_cols = {"feature", "mean"}
-    missing = required_cols - set(means_df.columns)
-    if missing:
-        raise ValueError(f"Training means file missing required columns: {missing}")
+    # infer county dummy and trend feature names
+    county_dummy_cols = [c for c in feature_cols_final if c.startswith("county_")]
+    trend_cols = [c for c in feature_cols_final if c.startswith("trend_")]
 
-    return dict(zip(means_df["feature"], means_df["mean"]))
+    # climate + squared features are everything else
+    non_climate = set(county_dummy_cols + trend_cols)
+    climate_and_sq_cols = [c for c in feature_cols_final if c not in non_climate]
+
+    # base climate columns = those without _sq
+    climate_cols = [c for c in climate_and_sq_cols if not c.endswith("_sq")]
+
+    loca_means = {}
+    loca_stds = {}
+
+    for col in climate_cols:
+        loca_means[col] = df[col].mean()
+        loca_stds[col] = df[col].std()
+
+        if loca_stds[col] == 0:
+            raise ValueError(f"SD is 0 for featuer: {col}")
+    return loca_means, loca_stds
 
 
 # =========================================================
 # Helper 5
 # Build projection design matrix exactly like training
 # =========================================================
-def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979):
+def build_projection_design_matrix(df, coef_wide, loca_means, loca_stds, base_year=1979):
     """
     Rebuild X exactly like training:
       - center climate vars using TRAINING means
@@ -194,26 +201,11 @@ def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979
     if missing_climate:
         raise ValueError(f"LOCA input is missing required climate predictors: {missing_climate}")
 
-    # center using training means
-    valid_cols = [col for col in training_means.keys() if col in df_model.columns]
-
-    for col in valid_cols:
-        df_model[col] = df_model[col].astype(float) - float(training_means[col])
-
-    if DEBUG:
-        print("\n=== DEBUG 3: CENTERING CHECK ===")
-        
-        for col in valid_cols[:5]:
-            raw_mean = df[col].mean()
-            centered_mean = df_model[col].mean()
-            training_mean = training_means[col]
-
-            print(f"\nFeature: {col}")
-            print(f"  Raw LOCA mean: {raw_mean:.3f}")
-            print(f"  Training mean: {training_mean:.3f}")
-            print(f"  Centered mean: {centered_mean:.3f}")
-
-        print("\n Centered mean should be ~0")
+    # standardization
+    for col in climate_cols:
+        if col not in loca_means or col not in loca_stds:
+            raise ValueError(f"Missing LOCA stats for {col}")
+        df_model[col] = (df_model[col] - loca_means[col])/ loca_stds[col]
 
     # squared terms
     for col in climate_cols:
@@ -248,14 +240,6 @@ def build_projection_design_matrix(df, coef_wide, training_means, base_year=1979
 
     # reorder exactly like coefficients
     X_df = X_df.reindex(columns=feature_cols_final)
-    if DEBUG:
-        print("\n=== DEBUG 4: DESIGN MATRIX ===")
-        print("Shape:", X_df.shape)
-        print("Any NaNs:", X_df.isna().any().any())
-
-        print("\nSample stats:")
-        print(X_df.iloc[:, :5].describe())
-
 
     if X_df.isna().any().any():
         missing_cols = X_df.columns[X_df.isna().any()].tolist()
@@ -365,46 +349,28 @@ def calculate_area_weighted_california_yield(pred_all_df, area_df):
 # Main
 # =========================================================
 df_loca, loca_fp = load_loca_data(loca_model, ssp)
-if DEBUG:
-    print("\n=== DEBUG 1: LOCA RAW DATA ===")
-    print("File:", loca_fp)
-    print("Shape:", df_loca.shape)
-
-    check_cols = ["tmmn_bo", "tmmx_bo", "tmean_bo"]
-
-    print("\nSummary stats:")
-    print(df_loca[check_cols].describe())
-
-    print("\nMeans:")
-    for col in check_cols:
-        print(col, df_loca[col].mean())
-
-    print("\n If values ~280–310 → Kelvin ")
-    print(" If values ~5–30 → Celsius ")
-
 area_df = load_area_data()
 coef_long, coef_wide = load_coefficient_matrix(coef_file)
-training_means = load_training_means()
+loca_means, loca_stds = compute_loca_stats(df_loca, coef_wide)
+stats_df = pd.DataFrame({
+    "feature": list(loca_means.keys()),
+    "mean": list(loca_means.values()),
+    "std": list(loca_stds.values())
+})
 
-if DEBUG:
-    print("\n=== DEBUG 2: TRAINING MEANS ===")
-    print("Total features:", len(training_means))
+stats_fp = os.path.join(
+    output_dir, f"{loca_model}_{ssp}_loca_hist_standardization_stats.csv"
+)
 
-    sample_keys = list(training_means.keys())[:10]
-    print("Sample features:", sample_keys)
+stats_df.to_csv(stats_fp, index=False)
 
-    for k in sample_keys:
-        print(f"{k}: {training_means[k]}")
-
-print(f"Loaded LOCA file: {loca_fp}")
-print(f"LOCA rows: {len(df_loca)}")
-print(f"Loaded {coef_wide.shape[0]} statistical models")
-print(f"Loaded {coef_wide.shape[1]} final features")
+print(f"Saved LOCA stats: {stats_fp}")
 
 df_model, X_df = build_projection_design_matrix(
     df=df_loca,
     coef_wide=coef_wide,
-    training_means=training_means,
+    loca_means=loca_means,
+    loca_stds=loca_stds, 
     base_year=1979
 )
 
@@ -412,14 +378,6 @@ print("Projection design matrix shape:", X_df.shape)
 
 pred_matrix = predict_all_models(X_df, coef_wide)
 print("Prediction matrix shape:", pred_matrix.shape)
-if DEBUG:
-    print("\n=== DEBUG 5: PREDICTIONS ===")
-    print("Shape:", pred_matrix.shape)
-    print("Min:", np.min(pred_matrix))
-    print("Max:", np.max(pred_matrix))
-    print("Mean:", np.mean(pred_matrix))
-
-    print("\n Expected yield ~7000–11000")
 
 county_year_summary_df, county_year_all_df = build_prediction_output(
     df_model=df_model,
@@ -431,12 +389,6 @@ statewide_summary_df, statewide_all_iter_df = calculate_area_weighted_california
     pred_all_df=county_year_all_df,
     area_df=area_df
 )
-
-if DEBUG:
-    print("\n=== DEBUG 6: FINAL STATEWIDE ===")
-    print(statewide_summary_df.head())
-    print("\nSummary stats:")
-    print(statewide_summary_df.describe())
     
 # output naming
 tag = f"{loca_model}_{ssp}"
