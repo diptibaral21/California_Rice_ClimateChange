@@ -10,7 +10,7 @@
 # setting home directory
 #SBATCH -D /group/moniergrp/dbaral/California_Rice_ClimateChange/historical_analysis/gridmet
 
-# setting high priority
+# setting priority
 #SBATCH -p high
 
 # setting standard error output
@@ -20,7 +20,7 @@
 #SBATCH -o /group/moniergrp/dbaral/run_project/slurm_log/slurm_output/stoutput_%j.txt
 
 # setting memory and cpus
-#SBATCH --mem=40G
+#SBATCH --mem=20G
 #SBATCH --cpus-per-task=4
 
 # setting the max time
