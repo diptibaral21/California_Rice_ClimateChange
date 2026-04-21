@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 import statsmodels.api as sm
 import joblib
-from tqdm import tqdm
+import sys
 
 
 # =========================================================
@@ -18,9 +18,7 @@ from tqdm import tqdm
 CLIMATE_DIR = "/group/moniergrp/dbaral"
 file_path = os.path.join(CLIMATE_DIR, "run_project/input_data/gridmet_hist_model_input")
 save_path = os.path.join(CLIMATE_DIR, "run_project/output_data/historical_model")
-
 os.makedirs(save_path, exist_ok=True)
-
 
 # =========================================================
 # Helper function 1
@@ -43,7 +41,7 @@ def load_raw_data():
 # Build design matrix
 # =========================================================
 
-def build_design_matrix(df):
+def build_design_matrix(df, file_prefix="gridmet"):
     """
     Build the design matrix explicitly for a no-intercept Lasso model.
 
@@ -72,8 +70,8 @@ def build_design_matrix(df):
         Y                    = response series
         feature_cols_final   = final feature names in order
         climate_cols         = original climate variable names
-        climate_norm_means = means used to normalize climate variables
-        climate_norm_stds  = stds used for normalization
+        climate_norm_means   = means used to normalize climate variables
+        climate_norm_stds    = stds used for normalization
         base_year            = base year used for time trends
     """
 
@@ -156,7 +154,7 @@ def build_design_matrix(df):
         axis=1
     )
 
-    X_df.to_csv(os.path.join(save_path, "gridmet_tis.csv"), index=False)
+    X_df.to_csv(os.path.join(save_path, f"{file_prefix}_tis_v1.csv"), index=False)
 
     # -----------------------------------------------------
     # Step 8: define response
@@ -185,7 +183,7 @@ def build_design_matrix(df):
 # Remove influential outliers using Cook's distance
 # =========================================================
 
-def remove_outliers_with_cooks_distance(df_model, X_df, Y):
+def remove_outliers_with_cooks_distance(df_model, X_df, Y, file_prefix="gridmet"):
     """
     Remove influential observations using Cook's distance.
 
@@ -235,157 +233,50 @@ def remove_outliers_with_cooks_distance(df_model, X_df, Y):
     X_filtered = X_df.loc[mask].copy()
     Y_filtered = Y.loc[mask].copy()
 
-    X_filtered.to_csv(os.path.join(save_path, "gridmet_tis_filtered.csv"))
+    X_filtered.to_csv(os.path.join(save_path, f"{file_prefix}_tis_filtered_v1.csv"), index=False)
 
     return df_filtered, X_filtered, Y_filtered, threshold
 
 
 # =========================================================
 # Helper function 4
-# Fit one final no-intercept Lasso model
-# =========================================================
-
-def fit_and_save_full_sample_lasso_no_intercept(
-    X,
-    Y,
-    feature_cols_final,
-    climate_cols,
-    climate_norm_means,
-    climate_norm_stds,
-    base_year,
-    save_path
-):
-    """
-    Fit one final Lasso model with no separate intercept.
-
-    Important:
-        In this specification:
-            - county dummy coefficients = county fixed effects
-            - trend coefficients = county-specific time trends
-            - no separate intercept is estimated
-
-    Saves:
-        1. fitted pipeline
-        2. coefficient csv
-        3. metadata json
-
-    Returns:
-        pipe      = fitted pipeline
-        coef_df   = coefficient dataframe
-        metadata  = model metadata
-    """
-
-    # -----------------------------------------------------
-    # Step 1: define alpha grid
-    # -----------------------------------------------------
-    alphas = [5, 4, 3, 2, 1, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001]
-
-    # -----------------------------------------------------
-    # Step 2: build LassoCV pipeline with no intercept
-    # No StandardScaler here because:
-    #   - we already normalized climate variables manually
-    #   - we do NOT want to scale county dummies
-    #   - we do NOT want to scale county trends
-    # -----------------------------------------------------
-    pipe = Pipeline([
-        ("lasso", LassoCV(
-            alphas=alphas,
-            cv=5,
-            max_iter=int(1e7),
-            random_state=45,
-            fit_intercept=False
-        ))
-    ])
-
-    # -----------------------------------------------------
-    # Step 3: fit on full filtered dataset
-    # -----------------------------------------------------
-    pipe.fit(X, Y)
-
-    # -----------------------------------------------------
-    # Step 4: extract fitted Lasso model
-    # -----------------------------------------------------
-    lasso = pipe.named_steps["lasso"]
-
-    # -----------------------------------------------------
-    # Step 5: save coefficients
-    # County coefficients are directly county fixed effects
-    # -----------------------------------------------------
-    coef_df = pd.DataFrame({
-        "feature": feature_cols_final,
-        "coefficient": lasso.coef_
-    })
-
-    coef_df.to_csv(
-        os.path.join(save_path, "gridmet_hist_coefficients_normalized.csv"),
-        index=False
-    )
-
-    # # -----------------------------------------------------
-    # # Step 6: save fitted pipeline
-    # # -----------------------------------------------------
-    # joblib.dump(
-    #     pipe,
-    #     os.path.join(save_path, "gridmet_hist_lasso_pipeline_normalized.joblib")
-    # )
-
-    # -----------------------------------------------------
-    # Step 7: save metadata
-    # also save normalizing means, stds, and base year because
-    # future prediction must use the same transformation
-    # -----------------------------------------------------
-    metadata = {
-        "alpha_selected": float(lasso.alpha_),
-        "r2_full_sample": float(pipe.score(X, Y)),
-        "fit_intercept": False,
-        "n_samples": int(len(Y)),
-        "n_features": int(len(feature_cols_final)),
-        "base_year_for_trend": int(base_year),
-        "climate_columns": climate_cols,
-        "feature_columns_final": feature_cols_final,
-        "climate_norm_means": climate_norm_means,
-        "climate_norm_stds": climate_norm_stds
-    }
-
-    with open(os.path.join(save_path, "gridmet_hist_model_metadata_normalized.json"), "w") as f:
-        json.dump(metadata, f, indent=2)
-
-    return pipe, coef_df, metadata
-
-# =========================================================
-# Helper function 5
 # Run repeated county-wise 70/30 validation
 # =========================================================
 
-def run_1000_validation_no_intercept(
+def run_single_iteration(
     X,
     Y,
     df_filtered,
     feature_cols_final,
     save_path,
-    n_iterations=1000
+    iteration_id
 ):
     """
-    Repeat county-wise 70/30 validation many times.
+    Run a single 70-30 county-wise validation iteration for a job array
 
     Why:
-        Instead of trusting one single split, we repeat the model fitting
+        Instead of trusting one single split, we repeat the model fitting 1000 times
         to assess:
             - coefficient stability
             - test R2 stability
             - train/test RMSE stability
             - selected alpha stability
             - use for future projection 
+        We run the iterations as a job array, we can parallelize 1000 iterations across multiple
+        cluster nodes. Each task fits one model independently, drastically reducing the total 
+        execution time
 
     County-wise split:
-        We split within county so that every county is represented
-        in both training and testing.
+        We split within county using the iteration_id as the random state. This ensures
+        that every county is represented in both training and testing.
 
     Saves:
-        1. one long coefficient file across all iterations
-        2. one metrics file across all iterations
+        1. iteration-specific coefficient csv in temporary dir
+        2. iteration-specific metrics json in temporary save dir
 
     Returns:
+        None
+        The files saved in a temporary dir are merged to return the following files in next step
         final_coef_df = coefficient results across all iterations
         metrics_df    = validation metrics across all iterations
     """
@@ -396,123 +287,147 @@ def run_1000_validation_no_intercept(
     alphas = [5, 4, 3, 2, 1, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001]
 
     # -----------------------------------------------------
-    # Step 2: initialize storage containers
-    # -----------------------------------------------------
-    all_coef_list = []
-    metrics_list = []
-
-    # -----------------------------------------------------
-    # Step 3: get county names
+    # Step 2: get county names
     # -----------------------------------------------------
     unique_counties = sorted(df_filtered["county"].unique())
 
     # -----------------------------------------------------
     # Step 4: start repeated validation loop
     # -----------------------------------------------------
-    for i in tqdm(range(1, n_iterations + 1), desc="Running 1000 Lasso validations"):
 
-        train_indices = []
-        test_indices = []
+    train_indices = []
+    test_indices = []
 
-        # -------------------------------------------------
-        # Step 4a: split within each county
-        # -------------------------------------------------
-        for county in unique_counties:
-            county_indices = df_filtered.index[df_filtered["county"] == county]
+    # -------------------------------------------------
+    # Step 4a: split within each county
+    # -------------------------------------------------
+    for county in unique_counties:
+        county_indices = df_filtered.index[df_filtered["county"] == county]
 
-            train_idx_c, test_idx_c = train_test_split(
-                county_indices,
-                test_size=0.3,
-                random_state=i
-            )
+        train_idx_c, test_idx_c = train_test_split(
+            county_indices,
+            test_size=0.3,
+            random_state=iteration_id # seed changes per array task
+        )
 
-            train_indices.extend(train_idx_c)
-            test_indices.extend(test_idx_c)
+        train_indices.extend(train_idx_c)
+        test_indices.extend(test_idx_c)
 
-        # -------------------------------------------------
-        # Step 4b: create train/test matrices
-        # -------------------------------------------------
-        X_train = X.loc[train_indices]
-        X_test = X.loc[test_indices]
-        y_train = Y.loc[train_indices]
-        y_test = Y.loc[test_indices]
+    # -------------------------------------------------
+     # Step 4b: create train/test matrices
+    # -------------------------------------------------
+    X_train = X.loc[train_indices]
+    X_test = X.loc[test_indices]
+    y_train = Y.loc[train_indices]
+    y_test = Y.loc[test_indices]
 
-        # -------------------------------------------------
-        # Step 4c: fit LassoCV with no intercept
-        # -------------------------------------------------
-        pipe = Pipeline([
-            ("lasso", LassoCV(
-                alphas=alphas,
-                cv=5,
-                max_iter=int(1e7),
-                random_state=45,
-                fit_intercept=False
-            ))
-        ])
+    # -------------------------------------------------
+    # Step 4c: fit LassoCV with no intercept
+    # -------------------------------------------------
+    pipe = Pipeline([
+        ("lasso", LassoCV(
+            alphas=alphas,
+            cv=5,
+            max_iter=int(1e7),
+            random_state=45,
+            fit_intercept=False
+        ))
+    ])
 
-        pipe.fit(X_train, y_train)
+    pipe.fit(X_train, y_train)
 
-        lasso = pipe.named_steps["lasso"]
+    lasso = pipe.named_steps["lasso"]
 
-        # -------------------------------------------------
-        # Step 4d: predictions and validation metrics
-        # -------------------------------------------------
-        y_train_pred = pipe.predict(X_train)
-        y_test_pred = pipe.predict(X_test)
+    # -------------------------------------------------
+    # Step 4d: predictions and validation metrics
+    # -------------------------------------------------
+    y_train_pred = pipe.predict(X_train)
+    y_test_pred = pipe.predict(X_test)
 
-        rmse_train = np.sqrt(mean_squared_error(y_train, y_train_pred))
-        rmse_test = np.sqrt(mean_squared_error(y_test, y_test_pred))
+    rmse_train = float(np.sqrt(mean_squared_error(y_train, y_train_pred)))
+    rmse_test = float(np.sqrt(mean_squared_error(y_test, y_test_pred)))
 
-        r2_train = pipe.score(X_train, y_train)
-        r2_test = pipe.score(X_test, y_test)
+    r2_train = float(pipe.score(X_train, y_train))
+    r2_test = float(pipe.score(X_test, y_test))
 
-        # -------------------------------------------------
-        # Step 4e: save coefficients in long format
-        # -------------------------------------------------
-        coef_df_iteration = pd.DataFrame({
-            "iteration": i,
-            "feature": feature_cols_final,
-            "coefficient": lasso.coef_,
-            "alpha_selected": lasso.alpha_
-        })
+    # -------------------------------------------------
+    # Step 4e: save coefficients in long format to a temporary dir
+    # -------------------------------------------------
+    coef_df_iteration = pd.DataFrame({
+        "iteration": iteration_id,
+        "feature": feature_cols_final,
+        "coefficient": lasso.coef_,
+        "alpha_selected": lasso.alpha_
+    })
 
-        all_coef_list.append(coef_df_iteration)
+    #make temporary dir
+    temp_dir = os.path.join(save_path, "array_results_temp")
+    os.makedirs(temp_dir, exist_ok=True)
 
-        # -------------------------------------------------
-        # Step 4f: save metrics for this iteration
-        # -------------------------------------------------
-        metrics_list.append({
-            "iteration": i,
-            "alpha_selected": lasso.alpha_,
-            "R2_train": r2_train,
-            "R2_test": r2_test,
-            "RMSE_train": rmse_train,
-            "RMSE_test": rmse_test
-        })
+    coef_df_iteration.to_csv(os.path.join(temp_dir, f"coef_iter_{iteration_id}_v1.csv"), index=False)
+
+    # -------------------------------------------------
+    # Step 4f: save metrics for this iteration
+    # -------------------------------------------------
+    metrics_list = {
+        "iteration": iteration_id,
+        "alpha_selected": float(lasso.alpha_),
+        "R2_train": r2_train,
+        "R2_test": r2_test,
+        "RMSE_train": rmse_train,
+        "RMSE_test": rmse_test
+    }
+
+    with open(os.path.join(temp_dir, f"metrics_iter_{iteration_id}_v1.json"), "w") as f:
+        json.dump(metrics_list, f, indent=2)
+
+# =========================================================
+# Helper function 5
+# Aggregate array results
+# =========================================================
+
+def aggregate_array_results(save_path):
+    """ 
+    Combine individual iteration files into final datasets
+    Why:
+        After the job array completes, we have 1000 individual CSVs and 1000 JSONs
+        This funciton glues them back together into the final lon-format files used for anaylsis
+    Returns:
+        final_coef_df = combined coefficients
+        final_metrics_df = combined metrics
+    """
 
     # -----------------------------------------------------
-    # Step 5: combine all iterations
+    # Step 1: combine all iterations
     # -----------------------------------------------------
-    final_coef_df = pd.concat(all_coef_list, ignore_index=True)
-    metrics_df = pd.DataFrame(metrics_list)
+
+    temp_dir = os.path.join(save_path, "array_results_temp")
+    all_coef_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.startswith("coef_")]
+    all_metric_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.startswith("metrics_")]
+    
+    coef_list = [pd.read_csv(f) for f in all_coef_files]
+    final_coef_df = pd.concat(coef_list, ignore_index=True)
+    
+    metrics_list = []
+    for f in all_metric_files:
+        with open(f, "r") as j:
+            metrics_list.append(json.load(j))
+    final_metrics_df = pd.DataFrame(metrics_list)
 
     # -----------------------------------------------------
-    # Step 6: save full coefficient stability file
+    # Step 2: save full coefficient and metrics files 
     # -----------------------------------------------------
     final_coef_df.to_csv(
-        os.path.join(save_path, "gridmet_lasso_1000_iterations_coefficients_no_intercept.csv"),
+        os.path.join(save_path, "gridmet_lasso_1000_iterations_coefficients_v1.csv"),
         index=False
     )
 
-    # -----------------------------------------------------
-    # Step 7: save full metrics stability file
-    # -----------------------------------------------------
-    metrics_df.to_csv(
-        os.path.join(save_path, "gridmet_lasso_1000_iterations_stability_metrics_no_intercept.csv"),
+    final_metrics_df.to_csv(
+        os.path.join(save_path, "gridmet_lasso_1000_iterations_metrics_v1.csv"),
         index=False
     )
 
-    return final_coef_df, metrics_df
+    return final_coef_df, final_metrics_df
 
 
 # =========================================================
@@ -520,6 +435,8 @@ def run_1000_validation_no_intercept(
 # =========================================================
 
 if __name__ == "__main__":
+    #get the iteration ID form the SLURM env variable
+    iteration_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", 1))
 
     # -----------------------------------------------------
     # Step 1: load raw historical data
@@ -555,37 +472,17 @@ if __name__ == "__main__":
     )
 
     # -----------------------------------------------------
-    # Step 4: fit one final full-sample Lasso model
-    # In this setup:
-    #   county coefficients = county fixed effects
+    # Step 4: run repeated county-wise 70/30 validation
     # -----------------------------------------------------
-    pipe, coef_df, metadata = fit_and_save_full_sample_lasso_no_intercept(
-        X=X_filtered,
-        Y=Y_filtered,
-        feature_cols_final=feature_cols_final,
-        climate_cols=climate_cols,
-        climate_norm_means=climate_norm_means,
-        climate_norm_stds=climate_norm_stds,
-        base_year=base_year,
-        save_path=save_path
-    )
-
-    # -----------------------------------------------------
-    # Step 5: run repeated county-wise 70/30 validation
-    # -----------------------------------------------------
-    coef_1000_df, metrics_1000_df = run_1000_validation_no_intercept(
-        X=X_filtered,
-        Y=Y_filtered,
-        df_filtered=df_filtered,
-        feature_cols_final=feature_cols_final,
+    run_single_iteration(
+        X = X_filtered, 
+        Y = Y_filtered,
+        df_filtered = df_filtered,
+        feature_cols_final = feature_cols_final,
         save_path=save_path,
-        n_iterations=1000
+        iteration_id=iteration_id
     )
-
     # -----------------------------------------------------
-    # Step 6: final print statements
+    # Step 5: Print commands
     # -----------------------------------------------------
-    print("Finished no-intercept Lasso fit and 1000-iteration stability analysis.")
-    print(f"Cook's distance threshold used: {cooks_threshold:.6f}")
-    print(f"Final selected alpha: {metadata['alpha_selected']:.6f}")
-    print(f"Full-sample R2: {metadata['r2_full_sample']:.4f}")
+    print(f"Iteration {iteration_id} completed.")
