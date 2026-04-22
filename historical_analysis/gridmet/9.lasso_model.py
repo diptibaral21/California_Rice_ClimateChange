@@ -1,488 +1,356 @@
+"""
+
+=========================================================
+OVERVIEW
+=========================================================
+This script builds a Lasso regression model to explain 
+historical rice yield variability across counties in 
+California using temperature-derived climate indices 
+(from GridMET data).
+
+The goal of this modeling framework is to:
+    1. Quantify how temperature variability influences yield
+    2. Capture spatial heterogeneity across counties
+    3. Account for long-term yield trends
+    4. Allow nonlinear climate responses
+
+This script represents the TRAINING phase of a larger workflow:
+    - Training (this script)
+    - Aggregation of model outputs
+    - Simulation using GridMET (historical validation)
+    - Simulation using LOCA (historical + future projections)
+
+IMPORTANT:
+----------
+This script is ONLY used to TRAIN the model.
+
+Prediction and simulation MUST use:
+    build_design_matrix_for_prediction()
+
+=========================================================
+MODEL STRUCTURE
+=========================================================
+The model is specified as:
+
+    Yield =
+        County Fixed Effects
+      + County-Specific Time Trends
+      + Climate Variables (Normalized)
+      + Squared Climate Variables (Normalized)
+
+Each component serves a purpose:
+
+1. County Fixed Effects (FE):
+    - Captures time-invariant differences across counties
+    - Includes soil, management practices, irrigation, etc.
+    - No intercept is used → FE represent baseline yield
+
+2. County-Specific Time Trends:
+    - Captures long-term improvements or decline
+    - Accounts for technology, adaptation, policy shifts
+
+3. Climate Variables:
+    - Represent temperature conditions during key growth stages
+
+4. Squared Climate Terms:
+    - Capture nonlinear responses such as:
+        * heat stress (extreme high temps)
+        * cold damage (extreme low temps)
+
+=========================================================
+KEY MODELING CHOICES
+=========================================================
+
+- No intercept:
+    All county dummies are included -- avoids redundancy
+
+- Climate normalization:
+    Climate variables are standardized so that:
+        - coefficients are comparable across variables
+        - county FE represent yield under average climate
+
+- Squared terms:
+    Allows flexible nonlinear relationships
+
+- Cook's Distance Filtering:
+    Removes influential observations that could:
+        - distort coefficients
+        - bias model selection
+        - reduce robustness
+
+- County-wise 70-30 split:
+    Ensures:
+        - each county appears in both train and test
+        - avoids spatial leakage
+
+- Repeated training (SLURM array):
+    - Each iteration uses a different random split
+    - Used to quantify:
+        - coefficient stability
+        - predictive uncertainty
+
+
+
+=========================================================
+OUTPUTS
+=========================================================
+
+1. array_results_temp/
+    - coef_*.csv -- coefficients per iteration
+    - metrics_*.json -- model performance per iteration
+
+2. model_metadata.json
+    - Contains:
+        * feature order
+        * normalization parameters
+        * base year
+    - REQUIRED for simulation phase
+
+3. gridmet_design_matrix_full.csv
+    - BEFORE outlier removal
+    - Used for:
+        - debugging
+        - reproducibility
+        - comparison with LOCA data
+
+4. gridmet_design_matrix_filtered.csv
+    - AFTER Cook's filtering
+    - Used for model training
+
+=========================================================
+USAGE
+=========================================================
+
+Run via SLURM array:
+
+    sbatch --array=1-1000 
+
+Each task runs one iteration with a different random split.
+"""
+
 import os
 import json
 import numpy as np
 import pandas as pd
-from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LassoCV
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 import statsmodels.api as sm
-import joblib
-import sys
 
 
 # =========================================================
-# File paths
+# PATHS
 # =========================================================
-
 CLIMATE_DIR = "/group/moniergrp/dbaral"
-file_path = os.path.join(CLIMATE_DIR, "run_project/input_data/gridmet_hist_model_input")
-save_path = os.path.join(CLIMATE_DIR, "run_project/output_data/historical_model")
-os.makedirs(save_path, exist_ok=True)
+input_path = os.path.join(CLIMATE_DIR, "run_project/input_data/gridmet_hist_model_input")
+output_path = os.path.join(CLIMATE_DIR, "run_project/output_data/historical_model")
+os.makedirs(output_path, exist_ok=True)
+
 
 # =========================================================
-# Helper function 1
-# Load raw data
+# LOAD DATA
 # =========================================================
-
 def load_raw_data():
     """
-    Load the historical gridMET model input dataset.
+    Load historical GridMET dataset.
 
     Returns:
-        df = raw dataframe
+        df (DataFrame):
+            Contains:
+                - county
+                - year
+                - yield_kg_ha
+                - climate variables
     """
-    df = pd.read_csv(os.path.join(file_path, "Lasso_Model_Input_Variables_1979_2023.csv"))
-    return df
+    return pd.read_csv(os.path.join(input_path, "Lasso_Model_Input_Variables_1979_2023.csv"))
 
 
 # =========================================================
-# Helper function 2
-# Build design matrix
+# BUILD DESIGN MATRIX (TRAINING)
 # =========================================================
+def build_design_matrix(df):
 
-def build_design_matrix(df, file_prefix="gridmet"):
-    """
-    Build the design matrix explicitly for a no-intercept Lasso model.
+    df_model = df[df["yield_kg_ha"].notna()].copy()
 
-    Model structure:
-        Yield =
-            county fixed effects
-          + county-specific time trends
-          + normalize climate variables
-          + squared normalized climate variables
-
-    Important modeling choices:
-        1. No separate intercept in the model
-        2. All county dummy variables are included
-        3. County coefficients act as county fixed effects
-        4. Time trend starts at 0, not 1
-        5. Only climate variables are normalized
-        6. County dummies and county trends are NOT scaled
-
-    Why normalize climate variables:
-        This makes county fixed effects easier to interpret.
-        County FE then represent county baseline yield under average climate conditions.
-
-    Returns:
-        df_model             = dataframe used to build X and Y
-        X_df                 = final design matrix dataframe
-        Y                    = response series
-        feature_cols_final   = final feature names in order
-        climate_cols         = original climate variable names
-        climate_norm_means   = means used to normalize climate variables
-        climate_norm_stds    = stds used for normalization
-        base_year            = base year used for time trends
-    """
-
-    df_model = df.copy()
-
-    # -----------------------------------------------------
-    # Step 1: remove rows where yield is missing
-    # -----------------------------------------------------
-    df_model = df_model[df_model["yield_kg_ha"].notna()].copy()
-
-    # -----------------------------------------------------
-    # Step 2: define base climate predictor columns
-    # These are the continuous climate predictors only
-    # -----------------------------------------------------
     cols_exclude = ["county", "year", "yield_kg_ha"]
     climate_cols = [c for c in df_model.columns if c not in cols_exclude]
 
-    # -----------------------------------------------------
-    # Step 3: create squared terms 
-    # -----------------------------------------------------
-    squared_cols = []
-
+    # Create squared terms
     for col in climate_cols:
-        sq_col = f"{col}_sq"
-        df_model[sq_col] = df_model[col] ** 2
-        squared_cols.append(sq_col)
+        df_model[f"{col}_sq"] = df_model[col] ** 2
 
-    # -----------------------------------------------------
-    # Step 4: Normalize linear + squared variables separately
-    # -----------------------------------------------------
-    climate_norm_means = {}
-    climate_norm_stds = {}
+    # Normalize
+    means, stds = {}, {}
+    for col in climate_cols + [f"{c}_sq" for c in climate_cols]:
+        means[col] = float(df_model[col].mean())
+        stds[col] = float(df_model[col].std())
+        df_model[col] = (df_model[col] - means[col]) / stds[col]
 
-    all_climate_cols = climate_cols + squared_cols
+    # Fixed effects
+    dummies = pd.get_dummies(df_model["county"], prefix="county").astype(float)
 
-    for col in all_climate_cols:
-        mean_val = df_model[col].mean()
-        std_val = df_model[col].std()
-
-        climate_norm_means[col] = float(mean_val)
-        climate_norm_stds[col] = float(std_val)
-
-        df_model[col] = (df_model[col]- mean_val) / std_val
-
-    # -----------------------------------------------------
-    # Step 5: create all county dummy variables
-    # Keep all counties because we are fitting with no intercept
-    # -----------------------------------------------------
-    county_dummies = pd.get_dummies(
-        df_model["county"],
-        prefix="county",
-        drop_first=False
-    ).astype(int)
-
-    # -----------------------------------------------------
-    # Step 6: create county-specific time trends
-    # IMPORTANT:
-    # trend starts at 0 so county coefficient stays as baseline FE
-    # -----------------------------------------------------
+    # Trends
     base_year = int(df_model["year"].min())
-    time_trend = df_model["year"] - base_year
+    trend = df_model["year"] - base_year
 
-    county_trends = county_dummies.multiply(time_trend, axis=0)
-    county_trends.columns = [c.replace("county", "trend") for c in county_trends.columns]
+    trends = dummies.multiply(trend, axis=0)
+    trends.columns = [c.replace("county", "trend") for c in trends.columns]
 
-    # -----------------------------------------------------
-    # Step 7: combine all components into final design matrix
-    # Final X includes:
-    #   - normalized climate variables
-    #   - squared normalized climate variables
-    #   - county fixed effects
-    #   - county-specific time trends
-    # -----------------------------------------------------
-    X_df = pd.concat(
-        [
-            df_model[climate_cols + squared_cols],
-            county_dummies,
-            county_trends
-        ],
+    X = pd.concat(
+        [df_model[climate_cols + [f"{c}_sq" for c in climate_cols]], dummies, trends],
         axis=1
-    )
+    ).astype(float)
 
-    X_df.to_csv(os.path.join(save_path, f"{file_prefix}_tis_v1.csv"), index=False)
+    X.to_csv(os.path.join(output_path, "gridmet_design_matrix_full.csv"), index=False)
 
-    # -----------------------------------------------------
-    # Step 8: define response
-    # -----------------------------------------------------
-    Y = df_model["yield_kg_ha"].copy()
-
-    # -----------------------------------------------------
-    # Step 9: save final feature order
-    # This order must be preserved later for prediction
-    # -----------------------------------------------------
-    feature_cols_final = list(X_df.columns)
-
-    return (
-        df_model,
-        X_df,
-        Y,
-        feature_cols_final,
-        climate_cols,
-        climate_norm_means,
-        climate_norm_stds,
-        base_year
-    )
-
-# =========================================================
-# Helper function 3
-# Remove influential outliers using Cook's distance
-# =========================================================
-
-def remove_outliers_with_cooks_distance(df_model, X_df, Y, file_prefix="gridmet"):
-    """
-    Remove influential observations using Cook's distance.
-
-    Why:
-        Highly influential points can distort:
-            - coefficient estimates
-            - selected alpha
-            - stability results
-
-    Steps:
-        1. Fit OLS only for influence diagnostics
-        2. Compute Cook's distance
-        3. Apply threshold = 4 / n
-        4. Keep observations below threshold
-
-    Returns:
-        df_filtered = filtered dataframe
-        X_filtered  = filtered design matrix
-        Y_filtered  = filtered response
-        threshold   = Cook's distance threshold
-    """
-
-    # -----------------------------------------------------
-    # Step 1: fit OLS on full design matrix
-    # add_constant is okay here only for Cook's distance diagnostics
-    # -----------------------------------------------------
-    X_const = sm.add_constant(X_df)
-    model_sm = sm.OLS(Y, X_const).fit()
-
-    # -----------------------------------------------------
-    # Step 2: compute Cook's distance
-    # -----------------------------------------------------
-    influence = model_sm.get_influence()
-    cooks_d = influence.cooks_distance[0]
-
-    # -----------------------------------------------------
-    # Step 3: define rule-of-thumb threshold
-    # -----------------------------------------------------
-    threshold = 4 / len(Y)
-
-    # -----------------------------------------------------
-    # Step 4: keep non-influential rows
-    # -----------------------------------------------------
-    mask = cooks_d < threshold
-
-    df_filtered = df_model.loc[mask].copy()
-    X_filtered = X_df.loc[mask].copy()
-    Y_filtered = Y.loc[mask].copy()
-
-    X_filtered.to_csv(os.path.join(save_path, f"{file_prefix}_tis_filtered_v1.csv"), index=False)
-
-    return df_filtered, X_filtered, Y_filtered, threshold
+    return df_model, X, df_model["yield_kg_ha"], list(X.columns), means, stds, base_year
 
 
 # =========================================================
-# Helper function 4
-# Run repeated county-wise 70/30 validation
+# REMOVE OUTLIERS
 # =========================================================
+def remove_outliers(df_model, X, Y):
 
-def run_single_iteration(
-    X,
-    Y,
-    df_filtered,
-    feature_cols_final,
-    save_path,
-    iteration_id
-):
-    """
-    Run a single 70-30 county-wise validation iteration for a job array
+    X_const = sm.add_constant(X).astype(float)
 
-    Why:
-        Instead of trusting one single split, we repeat the model fitting 1000 times
-        to assess:
-            - coefficient stability
-            - test R2 stability
-            - train/test RMSE stability
-            - selected alpha stability
-            - use for future projection 
-        We run the iterations as a job array, we can parallelize 1000 iterations across multiple
-        cluster nodes. Each task fits one model independently, drastically reducing the total 
-        execution time
+    model = sm.OLS(Y, X_const).fit()
+    cooks_d = model.get_influence().cooks_distance[0]
 
-    County-wise split:
-        We split within county using the iteration_id as the random state. This ensures
-        that every county is represented in both training and testing.
+    mask = cooks_d < (4 / len(Y))
 
-    Saves:
-        1. iteration-specific coefficient csv in temporary dir
-        2. iteration-specific metrics json in temporary save dir
+    X_f = X.loc[mask].astype(float)
+    df_f = df_model.loc[mask]
+    Y_f = Y.loc[mask]
 
-    Returns:
-        None
-        The files saved in a temporary dir are merged to return the following files in next step
-        final_coef_df = coefficient results across all iterations
-        metrics_df    = validation metrics across all iterations
-    """
+    X_f.to_csv(os.path.join(output_path, "gridmet_design_matrix_filtered.csv"), index=False)
 
-    # -----------------------------------------------------
-    # Step 1: define alpha grid
-    # -----------------------------------------------------
-    alphas = [5, 4, 3, 2, 1, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001]
+    return df_f, X_f, Y_f
 
-    # -----------------------------------------------------
-    # Step 2: get county names
-    # -----------------------------------------------------
-    unique_counties = sorted(df_filtered["county"].unique())
 
-    # -----------------------------------------------------
-    # Step 4: start repeated validation loop
-    # -----------------------------------------------------
+# =========================================================
+# SAVE METADATA
+# =========================================================
+def save_metadata(features, means, stds, base_year):
 
-    train_indices = []
-    test_indices = []
-
-    # -------------------------------------------------
-    # Step 4a: split within each county
-    # -------------------------------------------------
-    for county in unique_counties:
-        county_indices = df_filtered.index[df_filtered["county"] == county]
-
-        train_idx_c, test_idx_c = train_test_split(
-            county_indices,
-            test_size=0.3,
-            random_state=iteration_id # seed changes per array task
-        )
-
-        train_indices.extend(train_idx_c)
-        test_indices.extend(test_idx_c)
-
-    # -------------------------------------------------
-     # Step 4b: create train/test matrices
-    # -------------------------------------------------
-    X_train = X.loc[train_indices]
-    X_test = X.loc[test_indices]
-    y_train = Y.loc[train_indices]
-    y_test = Y.loc[test_indices]
-
-    # -------------------------------------------------
-    # Step 4c: fit LassoCV with no intercept
-    # -------------------------------------------------
-    pipe = Pipeline([
-        ("lasso", LassoCV(
-            alphas=alphas,
-            cv=5,
-            max_iter=int(1e7),
-            random_state=45,
-            fit_intercept=False
-        ))
-    ])
-
-    pipe.fit(X_train, y_train)
-
-    lasso = pipe.named_steps["lasso"]
-
-    # -------------------------------------------------
-    # Step 4d: predictions and validation metrics
-    # -------------------------------------------------
-    y_train_pred = pipe.predict(X_train)
-    y_test_pred = pipe.predict(X_test)
-
-    rmse_train = float(np.sqrt(mean_squared_error(y_train, y_train_pred)))
-    rmse_test = float(np.sqrt(mean_squared_error(y_test, y_test_pred)))
-
-    r2_train = float(pipe.score(X_train, y_train))
-    r2_test = float(pipe.score(X_test, y_test))
-
-    # -------------------------------------------------
-    # Step 4e: save coefficients in long format to a temporary dir
-    # -------------------------------------------------
-    coef_df_iteration = pd.DataFrame({
-        "iteration": iteration_id,
-        "feature": feature_cols_final,
-        "coefficient": lasso.coef_,
-        "alpha_selected": lasso.alpha_
-    })
-
-    #make temporary dir
-    temp_dir = os.path.join(save_path, "array_results_temp")
-    os.makedirs(temp_dir, exist_ok=True)
-
-    coef_df_iteration.to_csv(os.path.join(temp_dir, f"coef_iter_{iteration_id}_v1.csv"), index=False)
-
-    # -------------------------------------------------
-    # Step 4f: save metrics for this iteration
-    # -------------------------------------------------
-    metrics_list = {
-        "iteration": iteration_id,
-        "alpha_selected": float(lasso.alpha_),
-        "R2_train": r2_train,
-        "R2_test": r2_test,
-        "RMSE_train": rmse_train,
-        "RMSE_test": rmse_test
+    metadata = {
+        "feature_cols_final": features,
+        "climate_norm_means": means,
+        "climate_norm_stds": stds,
+        "base_year": base_year
     }
 
-    with open(os.path.join(temp_dir, f"metrics_iter_{iteration_id}_v1.json"), "w") as f:
-        json.dump(metrics_list, f, indent=2)
+    json.dump(metadata, open(os.path.join(output_path, "model_metadata.json"), "w"), indent=2)
+
 
 # =========================================================
-# Helper function 5
-# Aggregate array results
+# RUN ITERATION (ORIGINAL LOGIC RESTORED)
 # =========================================================
+def run_iteration(X, Y, df, features, iteration_id):
 
-def aggregate_array_results(save_path):
-    """ 
-    Combine individual iteration files into final datasets
-    Why:
-        After the job array completes, we have 1000 individual CSVs and 1000 JSONs
-        This funciton glues them back together into the final lon-format files used for anaylsis
-    Returns:
-        final_coef_df = combined coefficients
-        final_metrics_df = combined metrics
-    """
+    # Alpha grid (original)
+    alphas = [5, 4, 3, 2, 1, 0.5, 0.1, 0.05, 0.01, 0.005, 0.001]
 
-    # -----------------------------------------------------
-    # Step 1: combine all iterations
-    # -----------------------------------------------------
+    train_idx, test_idx = [], []
 
-    temp_dir = os.path.join(save_path, "array_results_temp")
-    all_coef_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.startswith("coef_")]
-    all_metric_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.startswith("metrics_")]
-    
-    coef_list = [pd.read_csv(f) for f in all_coef_files]
-    final_coef_df = pd.concat(coef_list, ignore_index=True)
-    
-    metrics_list = []
-    for f in all_metric_files:
-        with open(f, "r") as j:
-            metrics_list.append(json.load(j))
-    final_metrics_df = pd.DataFrame(metrics_list)
+    for c in df["county"].unique():
+        idx = df.index[df["county"] == c]
 
-    # -----------------------------------------------------
-    # Step 2: save full coefficient and metrics files 
-    # -----------------------------------------------------
-    final_coef_df.to_csv(
-        os.path.join(save_path, "gridmet_lasso_1000_iterations_coefficients_v1.csv"),
-        index=False
+        tr, te = train_test_split(
+            idx,
+            test_size=0.3,
+            random_state=iteration_id
+        )
+
+        train_idx.extend(tr)
+        test_idx.extend(te)
+
+    X_train = X.loc[train_idx]
+    X_test = X.loc[test_idx]
+    y_train = Y.loc[train_idx]
+    y_test = Y.loc[test_idx]
+
+    model = LassoCV(
+        alphas=alphas,
+        cv=5,
+        fit_intercept=False,
+        max_iter=int(1e7),
+        random_state=45
     )
 
-    final_metrics_df.to_csv(
-        os.path.join(save_path, "gridmet_lasso_1000_iterations_metrics_v1.csv"),
-        index=False
-    )
+    model.fit(X_train, y_train)
 
-    return final_coef_df, final_metrics_df
+    rmse_train = np.sqrt(mean_squared_error(y_train, model.predict(X_train)))
+    rmse_test = np.sqrt(mean_squared_error(y_test, model.predict(X_test)))
+
+    temp = os.path.join(output_path, "array_results_temp")
+    os.makedirs(temp, exist_ok=True)
+
+    pd.DataFrame({
+        "iteration": iteration_id,
+        "feature": features,
+        "coefficient": model.coef_,
+        "alpha_selected": model.alpha_
+    }).to_csv(os.path.join(temp, f"coef_{iteration_id}.csv"), index=False)
+
+    json.dump({
+        "iteration": iteration_id,
+        "R2_train": model.score(X_train, y_train),
+        "R2_test": model.score(X_test, y_test),
+        "RMSE_train": float(rmse_train),
+        "RMSE_test": float(rmse_test)
+    }, open(os.path.join(temp, f"metrics_{iteration_id}.json"), "w"), indent=2)
 
 
 # =========================================================
-# Main workflow
+# PREDICTION DESIGN MATRIX
 # =========================================================
+def build_design_matrix_for_prediction(df, metadata):
 
+    df_model = df.copy()
+
+    cols_exclude = ["county", "year", "yield_kg_ha"]
+    climate_cols = [c for c in df_model.columns if c not in cols_exclude]
+
+    for col in climate_cols:
+        df_model[f"{col}_sq"] = df_model[col] ** 2
+
+    for col in climate_cols + [f"{c}_sq" for c in climate_cols]:
+        df_model[col] = (
+            df_model[col] - metadata["climate_norm_means"][col]
+        ) / metadata["climate_norm_stds"][col]
+
+    dummies = pd.get_dummies(df_model["county"], prefix="county").astype(float)
+
+    trend = df_model["year"] - metadata["base_year"]
+
+    trends = dummies.multiply(trend, axis=0)
+    trends.columns = [c.replace("county", "trend") for c in trends.columns]
+
+    X = pd.concat(
+        [df_model[climate_cols + [f"{c}_sq" for c in climate_cols]], dummies, trends],
+        axis=1
+    ).astype(float)
+
+    X = X[metadata["feature_cols_final"]]
+
+    return df_model, X
+
+
+# =========================================================
+# MAIN
+# =========================================================
 if __name__ == "__main__":
-    #get the iteration ID form the SLURM env variable
+
     iteration_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", 1))
 
-    # -----------------------------------------------------
-    # Step 1: load raw historical data
-    # -----------------------------------------------------
     df = load_raw_data()
 
-    # -----------------------------------------------------
-    # Step 2: build explicit design matrix
-    # Here we:
-    #   - normalize only climate variables
-    #   - create squared climate terms
-    #   - create all county fixed effects
-    #   - create county-specific time trends
-    # -----------------------------------------------------
-    (
-        df_model,
-        X_df,
-        Y,
-        feature_cols_final,
-        climate_cols,
-        climate_norm_means,
-        climate_norm_stds,
-        base_year
-    ) = build_design_matrix(df)
+    df_model, X, Y, features, means, stds, base_year = build_design_matrix(df)
 
-    # -----------------------------------------------------
-    # Step 3: remove influential outliers using Cook's distance
-    # -----------------------------------------------------
-    df_filtered, X_filtered, Y_filtered, cooks_threshold = remove_outliers_with_cooks_distance(
-        df_model,
-        X_df,
-        Y
-    )
+    save_metadata(features, means, stds, base_year)
 
-    # -----------------------------------------------------
-    # Step 4: run repeated county-wise 70/30 validation
-    # -----------------------------------------------------
-    run_single_iteration(
-        X = X_filtered, 
-        Y = Y_filtered,
-        df_filtered = df_filtered,
-        feature_cols_final = feature_cols_final,
-        save_path=save_path,
-        iteration_id=iteration_id
-    )
-    # -----------------------------------------------------
-    # Step 5: Print commands
-    # -----------------------------------------------------
-    print(f"Iteration {iteration_id} completed.")
+    df_f, X_f, Y_f = remove_outliers(df_model, X, Y)
+
+    run_iteration(X_f, Y_f, df_f, features, iteration_id)
+
+    print(f"Iteration {iteration_id} complete.")
