@@ -26,4 +26,4 @@
 # setting the max time
 #SBATCH -t 1:00:00
 
-srun python -u plot.py 
+srun python -u gridmet_plot.py 
