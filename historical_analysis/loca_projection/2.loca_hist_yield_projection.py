@@ -38,21 +38,14 @@ mean and standard deviation:
 
     X_norm = (X - mean_LOCA) / std_LOCA
 
-This differs from training (GridMET normalization) and is
-intentional, based on advisor guidance.
-
-Implication:
-------------
-- Coefficients are applied to re-scaled inputs
-- Interpretation shifts slightly but prediction remains valid
-- Must be clearly documented in thesis/paper
 
 =========================================================
 WORKFLOW
 =========================================================
 
 1. Load LOCA climate dataset
-2. Load trained Lasso model coefficients (1000 iterations)
+2. Load trained Lasso model coefficients (1000 iterations - 5 that was removed
+as it has <0.2 R2)
 3. Compute LOCA-specific normalization parameters
 4. Build design matrix:
     - normalize climate variables
@@ -60,7 +53,7 @@ WORKFLOW
     - create county fixed effects
     - create county-specific time trends
 5. Align design matrix with coefficient matrix (CRITICAL)
-6. Predict yield for all 1000 models
+6. Predict yield for all 995 models
 7. Generate outputs:
     - county-level yield (summary + full ensemble)
     - statewide area-weighted yield (summary + ensemble)
@@ -121,7 +114,7 @@ coef_file = os.path.join(
     PROJECT_DIR,
     "output_data",
     "historical_model",
-    "final_coefficients.csv"
+    "final_cleaned_coefficients.csv"
 )
 
 area_file = os.path.join(
@@ -202,13 +195,16 @@ def build_X(df, coef_wide, means, stds, base_year=1979):
         if c not in county_cols + trend_cols and not c.endswith("_sq")
     ]
 
-    # normalize
-    for col in climate_cols:
-        df[col] = (df[col] - means[col]) / stds[col]
-
-    # squared terms
+    #create squared from RAW
     for col in climate_cols:
         df[f"{col}_sq"] = df[col] ** 2
+
+    # Normalize
+    means, stds = {}, {}
+    for col in climate_cols + [f"{c}_sq" for c in climate_cols]:
+        means[col] = float(df[col].mean())
+        stds[col] = float(df[col].std())
+        df[col] = (df[col] - means[col]) / stds[col]
 
     # county FE
     dummies = pd.get_dummies(df["county"], prefix="county").astype(float)
@@ -225,7 +221,7 @@ def build_X(df, coef_wide, means, stds, base_year=1979):
         axis=1
     )
 
-    # 🔥 CRITICAL FIX
+    #  CRITICAL FIX
     X = X.reindex(columns=feature_cols)
 
     # dtype safety
@@ -239,7 +235,7 @@ def build_X(df, coef_wide, means, stds, base_year=1979):
 # =========================================================
 def predict_all_models(X, coef_wide):
 
-    # 🔥 CRITICAL FIX: align features
+    # CRITICAL FIX: align features
     coef_wide = coef_wide[X.columns]
 
     return coef_wide.values @ X.values.T
@@ -357,6 +353,25 @@ df = load_loca_data()
 area_df = load_area()
 coef_wide = load_coefficients()
 
+means, stds = compute_loca_stats(df, coef_wide)
+
+stats_df = pd.DataFrame({
+    "feature": list(means.keys()),
+    "mean": list(means.values()),
+    "std": list(stds.values())
+})
+
+stats_fp = os.path.join(
+    output_dir,
+    f"{loca_model}_historical_standardization_stats.csv"
+)
+
+stats_df.to_csv(stats_fp, index=False)
+
+print("Saved LOCA normalization stats:", stats_fp)
+
+
+
 # ===== DEBUG BLOCK 1: COEFFICIENT CHECK =====
 print("\n===== DEBUG: COEFFICIENT MATRIX =====")
 print("Shape:", coef_wide.shape)
@@ -402,6 +417,7 @@ print("Coefficient global min/max:", coef_wide.min().min(), coef_wide.max().max(
 
 
 pred_matrix = predict_all_models(X, coef_wide)
+pred_matrix = np.maximum(pred_matrix, 0)
 
 # ===== DEBUG BLOCK 4: PREDICTION CHECK =====
 print("\n===== DEBUG: PREDICTIONS =====")
