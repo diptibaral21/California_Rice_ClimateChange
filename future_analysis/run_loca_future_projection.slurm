@@ -16,6 +16,7 @@ echo "Job started on $(date)"
 
 echo "LOCA_MODEL = ${LOCA_MODEL}"
 echo "LOCA_SSP   = ${LOCA_SSP}"
+echo "TREND_MODE = ${TREND_MODE}"
 
 # activate environment
 source ~/.bashrc
@@ -23,6 +24,7 @@ conda activate myenv
 
 srun python -u /group/moniergrp/dbaral/California_Rice_ClimateChange/future_analysis/8.loca_future_yield_projection.py \
     --loca_model "${LOCA_MODEL}" \
-    --ssp "${LOCA_SSP}"
+    --ssp "${LOCA_SSP}" \
+    --trend_mode "${TREND_MODE}"
 
 echo "Job finished on $(date)"
