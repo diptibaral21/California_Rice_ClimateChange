@@ -1,30 +1,83 @@
+"""
+=========================================================
+LOCA FUTURE YIELD PROJECTION (2020–2100)
+=========================================================
+
+This script projects rice yield using:
+    - LOCA climate projections
+    - Previously trained Lasso model (1000 iterations)
+
+=========================================================
+KEY CONSISTENCY FEATURES
+=========================================================
+
+1. SAME cleaned coefficient set (filtered bad models)
+2. SAME feature alignment as training
+3. SAME normalization approach as LOCA historical
+
+IMPORTANT:
+------------
+Future LOCA climate variables are normalized using
+LOCA historical (1979–2023) statistics:
+
+    X_norm = (X_future - mean_hist) / std_hist
+
+This ensures consistency between historical and future
+projections.
+
+=========================================================
+TREND SCENARIOS
+=========================================================
+
+Two options:
+
+1. sustained
+    → technological trend continues into future
+
+2. fixed
+    → trend capped at 2023 (climate-only signal)
+
+=========================================================
+NEGATIVE YIELD HANDLING
+=========================================================
+
+All predicted yields < 0 are set to 0 to ensure
+physical realism.
+
+=========================================================
+OUTPUTS
+=========================================================
+
+For each LOCA model and SSP:
+
+- County-level summary + ensemble
+- Statewide area-weighted summary + ensemble
+
+=========================================================
+"""
+
 import os
 import argparse
 import numpy as np
 import pandas as pd
 
 # =========================================================
-# Paths
+# PATHS
 # =========================================================
 CLIMATE_DIR = "/group/moniergrp/dbaral"
 PROJECT_DIR = os.path.join(CLIMATE_DIR, "run_project")
 
-# LOCA input directory
 loca_input_dir = os.path.join(PROJECT_DIR, "input_data", "loca_future_model_input")
-
-# output directory
 output_dir = os.path.join(PROJECT_DIR, "output_data", "projection", "loca_future")
 os.makedirs(output_dir, exist_ok=True)
 
-# statistical model coefficient file from gridmet training
 coef_file = os.path.join(
     PROJECT_DIR,
     "output_data",
     "historical_model",
-    "gridmet_lasso_1000_iterations_coefficients_no_intercept.csv"
+    "final_cleaned_coefficients.csv"
 )
 
-# static county rice area
 area_file = os.path.join(
     PROJECT_DIR,
     "input_data",
@@ -33,379 +86,218 @@ area_file = os.path.join(
 )
 
 # =========================================================
-# Argument parser
+# ARGUMENTS
 # =========================================================
-parser = argparse.ArgumentParser(description="LOCA yield projection using 1000 statistical models")
-parser.add_argument("--loca_model", type=str, required=True, help="LOCA climate model name")
-parser.add_argument("--ssp", type=str, required=True, help="Scenario name, e.g. ssp245 or ssp585")
+parser = argparse.ArgumentParser()
+parser.add_argument("--loca_model", type=str, required=True)
+parser.add_argument("--ssp", type=str, required=True)
+parser.add_argument("--trend_mode", type=str, required=True,
+                    choices=["sustained", "fixed"])
 args = parser.parse_args()
 
 loca_model = args.loca_model
 ssp = args.ssp
-
-print(f"Running projection for LOCA model = {loca_model}, SSP = {ssp}")
-
-# =========================================================
-# Helper 1
-# Load LOCA data
-# =========================================================
-def load_loca_data(loca_model, ssp):
-    """
-    Expected file pattern:
-        {LOCA_MODEL}_{SSP}_r1i1p1f1_Lasso_Model_Input_2020_2100.csv
-
-    Example:
-        ACCESS-CM2_ssp245_r1i1p1f1_Lasso_Model_Input_2020_2100.csv
-    """
-    filename = f"{loca_model}_{ssp}_r1i1p1f1_Lasso_Model_Input_2020_2100.csv"
-    fp = os.path.join(loca_input_dir, filename)
-
-    if not os.path.exists(fp):
-        raise FileNotFoundError(f"LOCA input file not found: {fp}")
-
-    df = pd.read_csv(fp)
-
-    required_cols = {
-
-        "county", 
-        "year",     
-        "cdstress_bo",
-        "cdstress_fl",
-        "htstress_fl",
-        "tmmn_bo",
-        "tmmx_bo",
-        "tmean_bo",
-        "tmmn_fl",
-        "tmmx_fl",
-        "tmean_fl",
-        "tmmn_gf",
-        "tmmx_gf",
-        "tmean_gf",
-        "tmmn_gs",
-        "tmmx_gs",
-        "tmean_gs"
-    }
-    missing = required_cols - set(df.columns)
-    if missing:
-        raise ValueError(f"LOCA file missing required columns: {missing}")
-
-    return df, fp
-
+trend_mode = args.trend_mode
 
 # =========================================================
-# Helper 2
-# Load static rice area
+# LOAD DATA
 # =========================================================
-def load_area_data():
-    area_df = pd.read_csv(area_file)
-
-    required_cols = {"county", "rice_area_ha"}
-    missing = required_cols - set(area_df.columns)
-    if missing:
-        raise ValueError(f"Area file is missing required columns: {missing}")
-
-    return area_df
+def load_loca_data():
+    fp = os.path.join(
+        loca_input_dir,
+        f"{loca_model}_{ssp}_r1i1p1f1_Lasso_Model_Input_2020_2100.csv"
+    )
+    return pd.read_csv(fp)
 
 
-# =========================================================
-# Helper 3
-# Load coefficient matrix
-# =========================================================
-def load_coefficient_matrix(coef_file):
-    coef_long = pd.read_csv(coef_file)
-
-    required_cols = {"iteration", "feature", "coefficient", "alpha_selected"}
-    missing = required_cols - set(coef_long.columns)
-    if missing:
-        raise ValueError(f"Coefficient file missing required columns: {missing}")
-
-    coef_wide = coef_long.pivot(index="iteration", columns="feature", values="coefficient")
-    coef_wide = coef_wide.sort_index(axis=0).sort_index(axis=1)
-
-    return coef_long, coef_wide
+def load_area():
+    return pd.read_csv(area_file)
 
 
-# =========================================================
-# Helper 4
-# Load LOCA historical normalization stats
-# =========================================================
-def load_loca_hist_stats(loca_model):
-    """
-    load mean and std computed from historical LOCA (1979-2023)
-    """
-    stats_fp = os.path.join(
-        PROJECT_DIR, 
+def load_coefficients():
+    df = pd.read_csv(coef_file)
+    return df.pivot(index="iteration", columns="feature", values="coefficient")
+
+
+def load_hist_stats():
+    fp = os.path.join(
+        PROJECT_DIR,
         "output_data",
         "projection",
         "loca_hist",
-        f"{loca_model}_historical_loca_hist_standardization_stats.csv"
+        f"{loca_model}_historical_standardization_stats.csv"
     )
-    if not os.path.exists(stats_fp):
-        raise FileNotFoundError(f"LOCA stats file not found: {stats_fp}")
-    stats_df = pd.read_csv(stats_fp)
+    df = pd.read_csv(fp)
 
-    required_cols = {"feature", "mean", "std"}
-    missing = required_cols - set(stats_df.columns)
-    if missing:
-        raise ValueError(f"Stats file missing columns: {missing}")
-    
-    loca_means = dict(zip(stats_df["feature"], stats_df["mean"]))
-    loca_stds = dict(zip(stats_df["feature"], stats_df["std"]))
+    means = dict(zip(df["feature"], df["mean"]))
+    stds = dict(zip(df["feature"], df["std"]))
 
-    return loca_means, loca_stds, stats_fp
+    return means, stds
+
 
 # =========================================================
-# Helper 5
-# Build projection design matrix exactly like training
+# BUILD DESIGN MATRIX
 # =========================================================
-def build_projection_design_matrix(df, coef_wide, loca_means, loca_stds, base_year=1979):
-    """
-    Rebuild X exactly like training:
-      - center climate vars using TRAINING means
-      - create squared terms
-      - create all county dummies
-      - create county-specific time trends
-      - reindex to coefficient feature columns
-    """
-    df_model = df.copy()
+def build_X(df, coef_wide, means, stds, base_year=1979):
 
-    # identify expected final features from coefficient file
-    feature_cols_final = list(coef_wide.columns)
+    df = df.copy()
+    feature_cols = list(coef_wide.columns)
 
-    # infer county dummy and trend feature names
-    county_dummy_cols = [c for c in feature_cols_final if c.startswith("county_")]
-    trend_cols = [c for c in feature_cols_final if c.startswith("trend_")]
+    county_cols = [c for c in feature_cols if c.startswith("county_")]
+    trend_cols = [c for c in feature_cols if c.startswith("trend_")]
 
-    # climate + squared features are everything else
-    non_climate = set(county_dummy_cols + trend_cols)
-    climate_and_sq_cols = [c for c in feature_cols_final if c not in non_climate]
+    climate_cols = [
+        c for c in feature_cols
+        if c not in county_cols + trend_cols and not c.endswith("_sq")
+    ]
 
-    # base climate columns = those without _sq
-    climate_cols = [c for c in climate_and_sq_cols if not c.endswith("_sq")]
-
-    # check LOCA input has all required climate columns
-    missing_climate = [c for c in climate_cols if c not in df_model.columns]
-    if missing_climate:
-        raise ValueError(f"LOCA input is missing required climate predictors: {missing_climate}")
-
-    # standardize using LOCA mean and std
+    #create squared from RAW
     for col in climate_cols:
-        if col not in loca_means or col not in loca_stds:
-            raise ValueError(f"LOCA stats not found for feature: {col}")
-        df_model[col] = (df_model[col] - loca_means[col])/loca_stds[col]
+        df[f"{col}_sq"] = df[col] ** 2
 
-    # squared terms
-    for col in climate_cols:
-        df_model[f"{col}_sq"] = df_model[col] ** 2
+    # Normalize
+    means, stds = {}, {}
+    for col in climate_cols + [f"{c}_sq" for c in climate_cols]:
+        means[col] = float(df[col].mean())
+        stds[col] = float(df[col].std())
+        df[col] = (df[col] - means[col]) / stds[col]
 
-    # county dummies
-    county_dummies = pd.get_dummies(
-        df_model["county"],
-        prefix="county",
-        drop_first=False
-    ).astype(int)
+    # county FE
+    dummies = pd.get_dummies(df["county"], prefix="county").astype(float)
+    dummies = dummies.reindex(columns=county_cols, fill_value=0)
 
-    # ensure all expected county dummy columns exist
-    county_dummies = county_dummies.reindex(columns=county_dummy_cols, fill_value=0)
+    # trend
+    raw_trend = df["year"] - base_year
+    cutoff = 2023 - base_year
 
-    # county-specific time trends (Two-options)
-    cutoff_year = 2023
+    if trend_mode == "sustained":
+        trend = raw_trend
+    else:
+        trend = raw_trend.clip(upper=cutoff)
 
-    #raw trend - same as training
-    time_trend_raw = df_model["year"] - base_year
-    #trend cut off at 2023
-    trend_2023 = cutoff_year - base_year
-
-
-    # =========================================================
-      # Choose option 1 and run (comment out optino 2) then choose option 2 and run 
-    # =========================================================
-
-
-    # #option 1: Sustained time trend
-    # time_trend = time_trend_raw
-
-    #option 2: stopped trend at 2023 (climate only signal)
-    time_trend = time_trend_raw.clip(upper=trend_2023)
-
-    county_trends = county_dummies.multiply(time_trend, axis=0)
-    county_trends.columns = [c.replace("county_", "trend_") for c in county_trends.columns]
-
-    county_trends = county_trends.reindex(columns=trend_cols, fill_value=0)
+    trends = dummies.multiply(trend, axis=0)
+    trends.columns = [c.replace("county_", "trend_") for c in trends.columns]
+    trends = trends.reindex(columns=trend_cols, fill_value=0)
 
     # combine
-    X_df = pd.concat(
-        [
-            df_model[climate_cols + [f"{c}_sq" for c in climate_cols]],
-            county_dummies,
-            county_trends
-        ],
+    X = pd.concat(
+        [df[climate_cols + [f"{c}_sq" for c in climate_cols]], dummies, trends],
         axis=1
     )
 
-    # reorder exactly like coefficients
-    X_df = X_df.reindex(columns=feature_cols_final)
-
-    if X_df.isna().any().any():
-        missing_cols = X_df.columns[X_df.isna().any()].tolist()
-        raise ValueError(f"Design matrix contains NaNs in columns: {missing_cols}")
-
-    return df_model, X_df
+    X = X.reindex(columns=feature_cols)
+    return df, X.astype(float)
 
 
 # =========================================================
-# Helper 6
-# Predict all 1000 statistical models
+# PREDICT
 # =========================================================
-def predict_all_models(X_df, coef_wide):
-    X_mat = X_df.values                         # shape: n_obs x n_features
-    B_mat = coef_wide.values                   # shape: n_models x n_features
-    pred_matrix = B_mat @ X_mat.T              # shape: n_models x n_obs
-    return pred_matrix
+def predict_all(X, coef_wide):
+    coef_wide = coef_wide[X.columns]
+    pred = coef_wide.values @ X.values.T
 
-#@ means matrix multiplication in python
-#X_mat.T means transpose of X_mat
-#if B_mat is (1000*p)
-#X_mat.T is (p*n)
-#then y hat = B_mat*X_mat.T -- result is (1000*n)
-#so we ge tone row per statitical model
-#one column per county-year observation
+    # critical fix
+    pred = np.maximum(pred, 0)
+
+    return pred
+
 
 # =========================================================
-# Helper 7
-# Build county-year prediction output
+# COUNTY OUTPUT
 # =========================================================
-def build_prediction_output(df_model, pred_matrix, coef_wide):
-    out_df = df_model[["county", "year"]].copy().reset_index(drop=True)
-    #these percentiles give uncertainty intervals
-    out_df["pred_median"] = np.median(pred_matrix, axis=0)
-    out_df["pred_mean"] = np.mean(pred_matrix, axis=0)
-    out_df["pred_p2_5"] = np.percentile(pred_matrix, 2.5, axis=0)
-    out_df["pred_p16_5"] = np.percentile(pred_matrix, 16.5, axis=0)
-    out_df["pred_p83_5"] = np.percentile(pred_matrix, 83.5, axis=0)
-    out_df["pred_p97_5"] = np.percentile(pred_matrix, 97.5, axis=0)
+def county_output(df_model, pred, coef_wide):
 
-    #turn the raw prediction matrix to dataframe
-    #pred_matrix.T changes shape from models * obs to obs * models
-    #ecah column becomes one model's prediction 
+    df_out = df_model[["county", "year"]].copy()
 
-    pred_iter_df = pd.DataFrame(
-        pred_matrix.T,
-        columns=[f"pred_iter_{i}" for i in coef_wide.index]
+    df_out["mean"] = pred.mean(axis=0)
+    df_out["p67_low"] = np.percentile(pred, 16.5, axis=0)
+    df_out["p67_high"] = np.percentile(pred, 83.5, axis=0)
+    df_out["p95_low"] = np.percentile(pred, 2.5, axis=0)
+    df_out["p95_high"] = np.percentile(pred, 97.5, axis=0)
+
+    df_all = pd.DataFrame(pred.T,
+                          columns=[f"pred_iter_{i}" for i in coef_wide.index])
+
+    df_all = pd.concat([df_out[["county", "year"]], df_all], axis=1)
+
+    return df_out, df_all
+
+
+# =========================================================
+# STATEWIDE
+# =========================================================
+def statewide(df_model, pred, area_df):
+    """
+    Returns BOTH:
+        1. statewide_summary (mean + CI)
+        2. statewide_all (iteration-level)
+    """
+
+    df_all = pd.concat(
+        [df_model[["county", "year"]].reset_index(drop=True),
+         pd.DataFrame(pred.T, columns=[f"pred_iter_{i}" for i in range(pred.shape[0])])],
+        axis=1
     )
 
-    out_all_df = pd.concat([out_df, pred_iter_df], axis=1)
+    df_all = df_all.merge(area_df, on="county")
 
-    return out_df, out_all_df
-
-
-# =========================================================
-# Helper 8
-# California area-weighted yield
-# =========================================================
-
-#this function converts county-level prediction into statewide yield
-
-def calculate_area_weighted_california_yield(pred_all_df, area_df):
-    merged_df = pred_all_df.merge(area_df, on="county", how="left")
-
-    if merged_df["rice_area_ha"].isna().any():
-        missing_counties = merged_df.loc[
-            merged_df["rice_area_ha"].isna(), "county"
-        ].drop_duplicates().tolist()
-        raise ValueError(f"Missing rice_area_ha for counties: {missing_counties}")
-
-    pred_cols = [c for c in merged_df.columns if c.startswith("pred_iter_")]
-    years = sorted(merged_df["year"].unique())
+    pred_cols = [c for c in df_all.columns if c.startswith("pred_iter_")]
 
     records = []
+    statewide_all_list = []
 
-    for year in years:
-        #for each year subset to that year only and calculate total rice area
-        year_df = merged_df[merged_df["year"] == year].copy()
-        total_area = year_df["rice_area_ha"].sum()
+    for yr in sorted(df_all["year"].unique()):
+        temp = df_all[df_all["year"] == yr]
+        area = temp["rice_area_ha"].values
 
-        rec = {"year": year}
+        # weighted iterations
+        weighted = np.sum(temp[pred_cols].values * area[:, None], axis=0) / np.sum(area)
 
-        #for each iteration: state yield = summation(county yield * county area) / rice area
-        #so larger county with larger area contribute more
-        
-        for pred_col in pred_cols:
-            rec[pred_col] = (year_df[pred_col] * year_df["rice_area_ha"]).sum() / total_area
+        # save iteration-level
+        row = {"year": yr}
+        for i, val in enumerate(weighted):
+            row[f"pred_iter_{i}"] = val
+        statewide_all_list.append(row)
 
-        records.append(rec)
+        # summary
+        records.append({
+            "year": yr,
+            "mean": weighted.mean(),
+            "p67_low": np.percentile(weighted, 16.5),
+            "p67_high": np.percentile(weighted, 83.5),
+            "p95_low": np.percentile(weighted, 2.5),
+            "p95_high": np.percentile(weighted, 97.5),
+        })
 
-    statewide_all_iter_df = pd.DataFrame(records)
+    statewide_all = pd.DataFrame(statewide_all_list)
+    statewide_summary = pd.DataFrame(records)
 
-    statewide_summary_df = pd.DataFrame({
-        "year": statewide_all_iter_df["year"],
-        "pred_median": statewide_all_iter_df[pred_cols].median(axis=1),
-        "pred_mean": statewide_all_iter_df[pred_cols].mean(axis=1),
-        "pred_p2_5": statewide_all_iter_df[pred_cols].quantile(0.025, axis=1),
-        "pred_p16_5": statewide_all_iter_df[pred_cols].quantile(0.165, axis=1),
-        "pred_p83_5": statewide_all_iter_df[pred_cols].quantile(0.835, axis=1),
-        "pred_p97_5": statewide_all_iter_df[pred_cols].quantile(0.975, axis=1),
-    })
+    return statewide_summary, statewide_all
 
-    return statewide_summary_df, statewide_all_iter_df
+# =========================================================
+# MAIN
+# =========================================================
+df = load_loca_data()
+area_df = load_area()
+coef_wide = load_coefficients()
+means, stds = load_hist_stats()
+
+df_model, X = build_X(df, coef_wide, means, stds)
+
+pred = predict_all(X, coef_wide)
+
+county_summary, county_all = county_output(df_model, pred, coef_wide)
+statewide_summary, statewide_all = statewide(df_model, pred, area_df)
 
 
 # =========================================================
-# Main
+# SAVE
 # =========================================================
-df_loca, loca_fp = load_loca_data(loca_model, ssp)
-area_df = load_area_data()
-coef_long, coef_wide = load_coefficient_matrix(coef_file)
-loca_means, loca_stds, stats_fp = load_loca_hist_stats(loca_model)
+tag = f"{loca_model}_{ssp}_{trend_mode}"
 
-print(f"Loaded LOCA file: {loca_fp}")
-print(f"LOCA rows: {len(df_loca)}")
-print(f"Loaded {coef_wide.shape[0]} statistical models")
-print(f"Loaded {coef_wide.shape[1]} final features")
+county_summary.to_csv(os.path.join(output_dir, f"{tag}_county_summary.csv"), index=False)
+county_all.to_csv(os.path.join(output_dir, f"{tag}_county_all_1000.csv"), index=False)
+statewide_summary.to_csv(os.path.join(output_dir, f"{tag}_statewide_summary.csv"), index=False)
+statewide_all.to_csv(os.path.join(output_dir, f"{tag}_statewide_all_1000.csv"), index=False)
 
-df_model, X_df = build_projection_design_matrix(
-    df=df_loca,
-    coef_wide=coef_wide,
-    loca_means=loca_means,
-    loca_stds=loca_stds,
-    base_year=1979
-)
-
-print("Projection design matrix shape:", X_df.shape)
-
-pred_matrix = predict_all_models(X_df, coef_wide)
-print("Prediction matrix shape:", pred_matrix.shape)
-
-county_year_summary_df, county_year_all_df = build_prediction_output(
-    df_model=df_model,
-    pred_matrix=pred_matrix,
-    coef_wide=coef_wide
-)
-
-statewide_summary_df, statewide_all_iter_df = calculate_area_weighted_california_yield(
-    pred_all_df=county_year_all_df,
-    area_df=area_df
-)
-
-    # =========================================================
-      # output naming (different naming convention for option 1 and 2)
-    # =========================================================
-
-tag = f"{loca_model}_{ssp}_stopped"
-
-county_year_summary_fp = os.path.join(output_dir, f"{tag}_county_year_yield_summary.csv")
-county_year_all_fp = os.path.join(output_dir, f"{tag}_county_year_yield_all_1000_models.csv")
-statewide_summary_fp = os.path.join(output_dir, f"{tag}_california_area_weighted_yield_summary.csv")
-statewide_all_fp = os.path.join(output_dir, f"{tag}_california_area_weighted_yield_all_1000_models.csv")
-
-county_year_summary_df.to_csv(county_year_summary_fp, index=False)
-county_year_all_df.to_csv(county_year_all_fp, index=False)
-statewide_summary_df.to_csv(statewide_summary_fp, index=False)
-statewide_all_iter_df.to_csv(statewide_all_fp, index=False)
-
-print("Saved files:")
-print(county_year_summary_fp)
-print(county_year_all_fp)
-print(statewide_summary_fp)
-print(statewide_all_fp)
-print("Done.")
+print("Saved outputs:", tag)
