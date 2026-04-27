@@ -111,7 +111,7 @@ def simulate():
     # -----------------------------------------------------
     # Step 4: Load model coefficients
     # -----------------------------------------------------
-    coef_df = pd.read_csv(os.path.join(output_path, "final_coefficients.csv"))
+    coef_df = pd.read_csv(os.path.join(output_path, "final_cleaned_coefficients.csv"))
 
     coef_pivot = coef_df.pivot(
         index="iteration",
