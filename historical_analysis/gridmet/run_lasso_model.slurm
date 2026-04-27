@@ -5,7 +5,7 @@
 #SBATCH -A moniergrp
 
 # setting name of job
-#SBATCH -J 'lasso_model'
+#SBATCH -J 'lasso_model_high'
 
 # setting home directory
 #SBATCH -D /group/moniergrp/dbaral/California_Rice_ClimateChange/historical_analysis/gridmet
@@ -21,9 +21,9 @@
 
 # setting memory and cpus
 #SBATCH --mem=20G
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=10
 
 # setting the max time
-#SBATCH -t 24:00:00
+#SBATCH -t 2-00:00:00
 
 srun python -u 9.lasso_model.py 
