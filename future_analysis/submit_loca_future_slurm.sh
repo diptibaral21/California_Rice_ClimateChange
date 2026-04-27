@@ -24,6 +24,11 @@ ssp245
 ssp585
 )
 
+trends=(
+    sustained
+    fixed
+)
+
 # -----------------------------
 # Loop over all climate models
 # "${models[@]}" expands the array and iterates through each model
@@ -41,17 +46,22 @@ for model in "${models[@]}"; do
         # Print which SSP scenario is being submitted
         echo " -- scenario: ${ssp}"
 
-        # -----------------------------
-        # Submit a SLURM job
-        # -----------------------------
-         # --export passes environment variables to the SLURM job
-        # ALL means export all existing environment variables
-        # We also pass two custom variables:
-        #   LOCA_MODEL = current climate model
-        #   LOCA_SSP   = current SSP scenario
+        for trend in "${trends[@]}"; do
+            echo "-- trend: ${trend}"
 
-        sbatch --export=ALL,LOCA_MODEL="${model}",LOCA_SSP="${ssp}" \
-            run_loca_future_projection.slurm
+
+            # -----------------------------
+            # Submit a SLURM job
+            # -----------------------------
+            # --export passes environment variables to the SLURM job
+            # ALL means export all existing environment variables
+            # We also pass two custom variables:
+            #   LOCA_MODEL = current climate model
+            #   LOCA_SSP   = current SSP scenario
+
+            sbatch --export=ALL,LOCA_MODEL="${model}",LOCA_SSP="${ssp}",TREND_MODE="${trend}" \
+                run_loca_future_projection.slurm
+        done #end trend loop        
 
     done  # end SSP loop
 done  # end model loop
