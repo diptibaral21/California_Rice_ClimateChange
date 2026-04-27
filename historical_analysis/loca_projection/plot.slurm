@@ -35,4 +35,4 @@
 # send mail here
 #SBATCH --mail-user=
 
-srun python -u plot.py
+srun python -u loca_hist_plot.py

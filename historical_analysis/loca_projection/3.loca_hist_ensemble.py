@@ -7,7 +7,7 @@ This script builds a multi-model ensemble of historical
 rice yield simulations using LOCA climate datasets.
 
 Each LOCA climate model produces:
-    - 1000 statistical yield simulations (from Lasso model)
+    - 995 statistical yield simulations (from Lasso model)
     - statewide area-weighted yield
 
 This script combines outputs from all LOCA models into
@@ -18,8 +18,7 @@ ENSEMBLE STRUCTURE
 =========================================================
 Total ensemble members:
 
-    13 LOCA climate models × 1000 statistical models
-    = 13,000 ensemble members
+    13 LOCA climate models × 995 statistical models
 
 Each ensemble member represents:
     - one climate realization
